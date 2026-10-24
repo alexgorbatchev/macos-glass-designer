@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+.tmp/
+.codegraph/
+.workspaces/
+dist/
+.DS_Store
