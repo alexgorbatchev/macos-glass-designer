@@ -7,6 +7,21 @@ final class ActionTarget: NSObject {
   @objc func fire(_ sender: NSControl) { handler(sender) }
 }
 
+/// Retains closure targets: AppKit controls reference their targets weakly.
+@MainActor
+final class ActionBindings {
+  private var targets: [ActionTarget] = []
+
+  func bind(_ control: NSControl, _ handler: @escaping (NSControl) -> Void) {
+    let target = ActionTarget(handler)
+    targets.append(target)
+    control.target = target
+    control.action = #selector(ActionTarget.fire(_:))
+  }
+
+  func removeAll() { targets.removeAll() }
+}
+
 @MainActor
 func label(
   _ text: String, size: CGFloat = 12, weight: NSFont.Weight = .regular,

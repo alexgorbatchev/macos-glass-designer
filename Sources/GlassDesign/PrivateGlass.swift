@@ -5,7 +5,12 @@ import GlassBridge
 /// SDK NSGlassEffectView.h exposes style/tint/corner/content only; no public replacements exist here.
 @MainActor
 enum PrivateGlass {
-  static func read(_ object: AnyObject, _ key: String) -> Any? { GDRead(object, key, nil) }
+  static func read(_ object: AnyObject, _ key: String, issues: inout [String]) -> Any? {
+    var failure: NSString?
+    let value = GDRead(object, key, &failure)
+    if let failure { issues.append(failure as String) }
+    return value
+  }
 
   @discardableResult
   static func write(_ object: AnyObject, _ key: String, _ value: Any?, issues: inout [String])
@@ -30,19 +35,20 @@ enum PrivateGlass {
     return [root] + (root.sublayers ?? []).flatMap { layers($0) }
   }
 
-  static func backgrounds(_ view: NSView) -> [CALayer] {
+  static func backgrounds(_ view: NSView, issues: inout [String]) -> [CALayer] {
     layers(view.layer).filter { layer in
-      (layer.filters as? [NSObject])?.contains { read($0, "name") as? String == "glassBackground" }
-        == true
+      (layer.filters as? [NSObject])?.contains {
+        read($0, "name", issues: &issues) as? String == "glassBackground"
+      } == true
     }
   }
 
-  static func highlights(_ view: NSView) -> [(CALayer, NSObject)] {
+  static func highlights(_ view: NSView, issues: inout [String]) -> [(CALayer, NSObject)] {
     guard let cls = NSClassFromString("CASDFKeyFillHighlightEffect") else { return [] }
     return layers(view.layer).compactMap { layer in
       // 'effect' exists only on internal effect layers; check before KVC.
       guard layer.responds(to: NSSelectorFromString("effect")),
-        let effect = read(layer, "effect") as? NSObject, effect.isKind(of: cls)
+        let effect = read(layer, "effect", issues: &issues) as? NSObject, effect.isKind(of: cls)
       else { return nil }
       return (layer, effect)
     }
@@ -64,7 +70,7 @@ enum PrivateGlass {
       p.tintAlpha == 0
       ? nil
       : NSColor(
-        calibratedHue: p.tintHue, saturation: p.tintSaturation, brightness: p.tintBrightness,
+        hue: p.tintHue, saturation: p.tintSaturation, brightness: p.tintBrightness,
         alpha: p.tintAlpha)
   }
 
@@ -81,8 +87,9 @@ enum PrivateGlass {
       return false
     }
     let existing =
-      (backdrop.filters as? [NSObject])?.contains { read($0, "name") as? String == "variableBlur" }
-      == true
+      (backdrop.filters as? [NSObject])?.contains {
+        read($0, "name", issues: &issues) as? String == "variableBlur"
+      } == true
     if existing {
       write(backdrop, "filters.variableBlur.inputRadius", radius, issues: &issues)
       write(backdrop, "filters.variableBlur.inputMaskImage", mask, issues: &issues)

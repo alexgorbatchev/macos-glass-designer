@@ -2,7 +2,8 @@ import Foundation
 
 public enum SwiftExport {
   /// Standalone Swift value specification, deliberately independent of this app or any package.
-  public static func source(for parameters: GlassParameters, observed: [String: Double]) throws
+  public static func source(for parameters: GlassParameters, nativeFilterInputs: [String: Double])
+    throws
     -> String
   {
     try parameters.validate()
@@ -10,6 +11,7 @@ public enum SwiftExport {
       "// macOS Glass Designer — \(ProcessInfo.processInfo.operatingSystemVersionString)",
       "// Swift parameter specification for agents using AppKit, objc2, Qt, or another macOS bridge.",
       "// All distances are points (not pixels). Durations are seconds. HSBA / opacity use 0...1.",
+      "// Colors are sRGB HSBA: NSColor(hue:saturation:brightness:alpha:), not calibrated/Generic RGB.",
       "// Render with native NSGlassEffectView inside NSGlassEffectContainerView; minimum macOS 26.",
       "// Public: cornerRadius -> glass.cornerRadius; tint HSBA -> glass.tintColor (nil at alpha 0).",
       "// variant 1 -> .regular, 2 -> .clear; other variants require private set_variant:.",
@@ -21,7 +23,7 @@ public enum SwiftExport {
       "// filterInputs: sparse overrides on CALayer key paths filters.glassBackground.<key>.",
       "// Apply after AppKit builds its layers, and reapply when the recipe/appearance rebuilds them.",
       "// highlightInputs: CASDFKeyFillHighlightEffect keys. Reassign layer.effect to redraw.",
-      "// Missing dictionary keys mean AppKit default; observed values below are readouts, not overrides.",
+      "// Missing dictionary keys mean AppKit default. Native comments below are AppKit values before overrides.",
       "// customShadow -> separate unclipped CALayer shadowPath, black; windowShadow -> NSWindow.hasShadow.",
       "// glassEnabled removes the glass material while keeping sample content and fills visible.",
       "// windowTitled chooses titled/closable vs borderless for the detached transparent NSWindow.",
@@ -30,6 +32,7 @@ public enum SwiftExport {
       "// set backdrop.scale to screen scale. Mask X: outside edge 0 -> panel edge 1; Y: blur strength.",
       "// haloCurve is an ordered array of cubic Bezier nodes, with position/incoming/outgoing handles.",
       "// Between nodes A/B use A.position, A.outgoing, B.incoming, B.position; solve X to evaluate Y.",
+      "// kind records editing intent only (corner, smooth = aligned handles, symmetric = aligned and equal).",
       "// Coordinates use 0...1. X runs outside-to-panel; Y is strength. Hold endpoint strengths beyond their X.",
       "// haloUnderPanels keeps full endpoint strength inside the surface; haloDim uses the same mask.",
       "// haloMode: 0 variableBlur backdrop, 1 masked regular NSGlassEffectView, 2 masked clear glass.",
@@ -41,10 +44,12 @@ public enum SwiftExport {
       "// Respect Reduce Motion: use an unscaled fade / immediate secondary placement.",
       "// Private APIs are OS-dependent. Report unavailable controls; do not substitute another material.",
       "", "struct GlassCurvePoint { var x: Double; var y: Double }",
+      "enum GlassCurvePointKind { case corner, smooth, symmetric }",
       "struct GlassCurveNode {",
       "    var position: GlassCurvePoint",
       "    var incoming: GlassCurvePoint",
       "    var outgoing: GlassCurvePoint",
+      "    var kind: GlassCurvePointKind",
       "}", "", "struct DesignedGlassParameters {",
     ]
     for child in Mirror(reflecting: parameters).children {
@@ -56,8 +61,8 @@ public enum SwiftExport {
     lines.append(
       "// Variant: \(parameters.variant) \(GlassCatalog.variants[parameters.variant]); subvariant: \(parameters.subvariant ?? "none")"
     )
-    for field in GlassCatalog.filters where observed[field.key] != nil {
-      lines.append("// Observed glassBackground.\(field.key) = \(observed[field.key]!)")
+    for field in GlassCatalog.filters where nativeFilterInputs[field.key] != nil {
+      lines.append("// Native glassBackground.\(field.key) = \(nativeFilterInputs[field.key]!)")
     }
     return lines.joined(separator: "\n") + "\n"
   }
@@ -78,7 +83,7 @@ public enum SwiftExport {
     case let value as HaloCurve:
       func point(_ p: CurvePoint) -> String { ".init(x: \(p.x), y: \(p.y))" }
       let nodes = value.nodes.map {
-        "        .init(position: \(point($0.position)), incoming: \(point($0.incoming)), outgoing: \(point($0.outgoing)))"
+        "        .init(position: \(point($0.position)), incoming: \(point($0.incoming)), outgoing: \(point($0.outgoing)), kind: .\($0.kind.rawValue))"
       }
       return ("[GlassCurveNode]", "[\n" + nodes.joined(separator: ",\n") + "\n    ]")
     default:

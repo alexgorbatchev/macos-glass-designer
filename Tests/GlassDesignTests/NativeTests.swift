@@ -10,11 +10,8 @@ final class NativeTests: XCTestCase {
     defer { controller.window.orderOut(nil) }
     controller.window.orderFront(nil)
     controller.window.contentView?.layoutSubtreeIfNeeded()
-    func descendants(_ view: NSView) -> [NSView] {
-      [view] + view.subviews.flatMap { descendants($0) }
-    }
     for browser in [controller.variants, controller.subvariants] {
-      let fields = descendants(browser).compactMap { $0 as? NSTextField }
+      let fields = descendants(of: browser).compactMap { $0 as? NSTextField }
       let title = try XCTUnwrap(fields.first {
         $0.stringValue == (browser === controller.variants ? "VARIANTS" : "SUBVARIANTS")
       })
@@ -75,24 +72,27 @@ final class NativeTests: XCTestCase {
     let controller = DesignerController()
     defer { controller.window.orderOut(nil) }
     controller.window.orderFront(nil)
-    try await Task.sleep(for: .milliseconds(150))
-    controller.canvas.refreshInternals()
+    try await waitUntil("native filter readouts") {
+      !controller.canvas.nativeFilterInputs.isEmpty
+    }
     controller.loadPreset(1)
     let root = try XCTUnwrap(controller.window.contentView)
     root.layoutSubtreeIfNeeded()
-    func descendants(_ view: NSView) -> [NSView] {
-      [view] + view.subviews.flatMap { descendants($0) }
-    }
-    let views = descendants(root)
+    let views = descendants(of: root)
     let inspector = try XCTUnwrap(views.first { $0 is Inspector })
     let contentTop = inspector.convert(inspector.bounds, to: root).maxY
-    let backgrounds = try XCTUnwrap(views.compactMap { $0 as? NSSegmentedControl }.first {
-      $0.label(forSegment: 0) == "Landscape"
+    let scenes = try XCTUnwrap(views.compactMap { $0 as? NSSegmentedControl }.first {
+      $0.label(forSegment: 0) == "Desktop"
     })
-    XCTAssertTrue(backgrounds.superview === controller.canvas.superview?.superview)
+    let stageControls = try XCTUnwrap(scenes.superview)
+    XCTAssertTrue(stageControls.superview === controller.canvas.superview?.superview)
     XCTAssertEqual(
-      backgrounds.convert(backgrounds.bounds, to: root).minX,
+      scenes.convert(scenes.bounds, to: root).minX,
       controller.canvas.convert(controller.canvas.bounds, to: root).minX, accuracy: 0.5)
+    XCTAssertGreaterThan(
+      scenes.convert(scenes.bounds, to: root).minY,
+      controller.canvas.convert(controller.canvas.bounds, to: root).maxY,
+      "Scene controls sit above the stage")
     for title in ["Open…", "Save…", "Copy Swift  ⇧⌘C", "Copy JSON", "Paste recipe",
       "Pop  ⌘P", "Second Surface  ⌘T", "Detach  ⌘D"]
     {
@@ -120,9 +120,10 @@ final class NativeTests: XCTestCase {
       $0.stringValue.hasPrefix("Shape the material. Copy the recipe.")
     })
     let version = ProcessInfo.processInfo.operatingSystemVersion
-    XCTAssertEqual(
-      subtitle.stringValue,
-      "Shape the material. Copy the recipe. macOS v\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)")
+    XCTAssertTrue(
+      subtitle.stringValue.contains(
+        "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"),
+      "The header must show the running macOS version")
     let appTitle = try XCTUnwrap(fields.first { $0.stringValue == "macOS Glass Designer" })
     XCTAssertTrue(subtitle.superview === appTitle.superview)
     XCTAssertGreaterThan(subtitle.frame.minX, appTitle.frame.maxX)
@@ -169,9 +170,7 @@ final class NativeTests: XCTestCase {
     XCTAssertEqual(shortcut.superview!.convert(shortcut.alignmentRect(forFrame: shortcut.frame),
       to: inspector).maxX, inspector.bounds.maxX, accuracy: 0.5)
     for index in 0..<6 {
-      let item = NSMenuItem()
-      item.tag = index
-      controller.inspectorTab(item)
+      controller.selectInspector(index)
       XCTAssertEqual(tabs.selectedSegment, index)
     }
     controller.detachPreview()
@@ -187,12 +186,9 @@ final class NativeTests: XCTestCase {
     controller.window.orderFront(nil)
     let root = try XCTUnwrap(controller.window.contentView)
     root.layoutSubtreeIfNeeded()
-    func descendants(_ view: NSView) -> [NSView] {
-      [view] + view.subviews.flatMap { descendants($0) }
-    }
     let glass = try XCTUnwrap(controller.canvas.container.contentView?.subviews.first as? NSGlassEffectView)
     let sample = try XCTUnwrap(glass.contentView)
-    let text = descendants(sample).compactMap { $0 as? NSTextField }
+    let text = descendants(of: sample).compactMap { $0 as? NSTextField }
     XCTAssertEqual(text.count, 2)
     for field in text {
       XCTAssertEqual(field.alignment, .center, field.stringValue)
@@ -202,14 +198,12 @@ final class NativeTests: XCTestCase {
     controller.change { $0.secondarySeconds = 0.05 }
     func checkControls(enabled: Bool) throws {
       for (tab, labels) in [(0, ["Merge distance", "Panel gap"]), (5, ["Second duration"])] {
-        let item = NSMenuItem()
-        item.tag = tab
-        controller.inspectorTab(item)
+        controller.selectInspector(tab)
         for title in labels {
-          let slider = try XCTUnwrap(descendants(root).compactMap { $0 as? NSSlider }.first {
+          let slider = try XCTUnwrap(descendants(of: root).compactMap { $0 as? NSSlider }.first {
             $0.accessibilityLabel() == title
           })
-          let field = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextField }.first {
+          let field = try XCTUnwrap(descendants(of: root).compactMap { $0 as? NSTextField }.first {
             $0.accessibilityLabel() == title + " value"
           })
           XCTAssertEqual(slider.isEnabled, enabled, title)
@@ -217,25 +211,25 @@ final class NativeTests: XCTestCase {
         }
       }
       for title in ["Effect", "Easing"] {
-        let label = try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextField }.first {
+        let label = try XCTUnwrap(descendants(of: root).compactMap { $0 as? NSTextField }.first {
           $0.stringValue == title
         })
         let control = try XCTUnwrap(label.superview?.subviews.compactMap { $0 as? NSSegmentedControl }.first)
         XCTAssertEqual(control.isEnabled, enabled, title)
       }
-      let pop = try XCTUnwrap(descendants(root).compactMap { $0 as? NSSlider }.first {
+      let pop = try XCTUnwrap(descendants(of: root).compactMap { $0 as? NSSlider }.first {
         $0.accessibilityLabel() == "Pop duration"
       })
       XCTAssertTrue(pop.isEnabled)
     }
     try checkControls(enabled: false)
-    let toggle = try XCTUnwrap(descendants(root).compactMap { $0 as? NSButton }.first {
+    let toggle = try XCTUnwrap(descendants(of: root).compactMap { $0 as? NSButton }.first {
       $0.title == "Second Surface  ⌘T"
     })
     toggle.performClick(nil)
     XCTAssertTrue(controller.canvas.secondaryVisible)
     try checkControls(enabled: true)
-    try await Task.sleep(for: .milliseconds(180))
+    try await waitUntil("the second surface to settle") { !controller.canvas.secondaryAnimating }
     toggle.performClick(nil)
     XCTAssertFalse(controller.canvas.secondaryVisible)
     try checkControls(enabled: false)
@@ -249,12 +243,9 @@ final class NativeTests: XCTestCase {
     defer { controller.window.orderOut(nil) }
     controller.window.orderFront(nil)
     controller.change { $0.cornerRadius = 23.718281828 }
-    func descendants(_ view: NSView) -> [NSView] {
-      [view] + view.subviews.flatMap { descendants($0) }
-    }
     let root = try XCTUnwrap(controller.window.contentView)
     root.layoutSubtreeIfNeeded()
-    let fields = descendants(root).compactMap { $0 as? NSTextField }
+    let fields = descendants(of: root).compactMap { $0 as? NSTextField }
     let value = try XCTUnwrap(fields.first { $0.accessibilityLabel() == "Corner radius value" })
     XCTAssertEqual(value.stringValue, "23.72")
     let title = try XCTUnwrap(fields.first { $0.stringValue == "Corner radius" })
@@ -262,18 +253,22 @@ final class NativeTests: XCTestCase {
     let row = try XCTUnwrap(value.superview)
     let rowRect = row.convert(row.bounds, to: root)
     XCTAssertEqual(titleRect.midY, rowRect.midY, accuracy: 1)
-    XCTAssertEqual(title.alignmentRect(forFrame: title.frame).width, 168, accuracy: 0.5)
     XCTAssertEqual(controller.parameters.cornerRadius, 23.718281828)
-    let swift = try SwiftExport.source(for: controller.parameters, observed: [:])
+    let swift = try SwiftExport.source(for: controller.parameters, nativeFilterInputs: [:])
     XCTAssertTrue(swift.contains("23.718281828"))
     XCTAssertTrue(swift.contains("var secondaryEffect:"))
     XCTAssertFalse(swift.contains("correction"))
     for index in 0..<6 {
-      let item = NSMenuItem()
-      item.tag = index
-      controller.inspectorTab(item)
+      controller.selectInspector(index)
       root.layoutSubtreeIfNeeded()
-      for view in descendants(root) {
+      // Row titles (labels or override checkboxes) form one aligned column in every inspector.
+      let titles = descendants(of: root).compactMap { $0 as? NSStackView }
+        .filter { $0.arrangedSubviews.contains { $0 is NSSlider } }
+        .compactMap { $0.arrangedSubviews.first }
+      let columns = titles.map { $0.convert($0.alignmentRect(forFrame: $0.bounds), to: root) }
+      XCTAssertEqual(Set(columns.map { ($0.minX * 2).rounded() }).count, min(1, titles.count))
+      XCTAssertEqual(Set(columns.map { ($0.width * 2).rounded() }).count, min(1, titles.count))
+      for view in descendants(of: root) {
         guard view is NSTextField || view is NSButton || view is NSSegmentedControl,
           let control = view as? NSControl
         else { continue }
@@ -293,9 +288,8 @@ final class NativeTests: XCTestCase {
           row.arrangedSubviews.contains(where: { $0 is NSSlider })
         {
           XCTAssertEqual(check.title.first?.isUppercase, true, check.title)
-          XCTAssertEqual(check.bounds.width, 168, accuracy: 0.5)
           let group = try XCTUnwrap(row.superview)
-          let hint = try XCTUnwrap(descendants(group).compactMap { $0 as? NSTextField }.first {
+          let hint = try XCTUnwrap(descendants(of: group).compactMap { $0 as? NSTextField }.first {
             $0.stringValue.hasPrefix("Native ·") || $0.stringValue.hasPrefix("Override ·")
               || $0.stringValue == "Unavailable for this recipe"
           })
@@ -325,12 +319,11 @@ final class NativeTests: XCTestCase {
     controller.window.orderFront(nil)
     controller.window.contentView?.layoutSubtreeIfNeeded()
     controller.change { $0.haloEnabled = false }
-    try await Task.sleep(for: .milliseconds(150))
-    func descendants(_ view: NSView) -> [NSView] {
-      [view] + view.subviews.flatMap { descendants($0) }
+    try await waitUntil("native filter readouts") {
+      !controller.canvas.nativeFilterInputs.isEmpty
     }
     let slider = try XCTUnwrap(
-      descendants(controller.window.contentView!).compactMap { $0 as? NSSlider }
+      descendants(of: controller.window.contentView!).compactMap { $0 as? NSSlider }
         .first { $0.accessibilityLabel() == "Corner radius" })
     XCTAssertTrue(slider.isContinuous)
     for radius in [0.0, 40.5, 90.0] {
@@ -368,25 +361,109 @@ final class NativeTests: XCTestCase {
     controller.window.orderFront(nil)
     controller.loadPreset(2)
     controller.window.contentView?.layoutSubtreeIfNeeded()
-    try await Task.sleep(for: .milliseconds(150))
+    try await waitUntil("native filter readouts") {
+      !controller.canvas.nativeFilterInputs.isEmpty
+    }
     controller.change {
       $0.filterInputs["inputBlurRadius"] = 7.125
       $0.haloBlurRadius = 23.5
     }
     serviceSliderTracking()
-    let background = try XCTUnwrap(PrivateGlass.backgrounds(controller.canvas.container).first)
-    let blur = try XCTUnwrap(
-      PrivateGlass.read(background, "filters.glassBackground.inputBlurRadius") as? NSNumber)
-    XCTAssertEqual(blur.doubleValue, 7.125)
+    XCTAssertEqual(liveFilterInput(controller.canvas, "inputBlurRadius"), 7.125)
+    var issues: [String] = []
     let halo = try XCTUnwrap(
       PrivateGlass.layers(controller.canvas.layer).first { layer in
         (layer.filters as? [NSObject])?.contains {
-          PrivateGlass.read($0, "name") as? String == "variableBlur"
+          PrivateGlass.read($0, "name", issues: &issues) as? String == "variableBlur"
         } == true
       })
     let radius = try XCTUnwrap(
-      PrivateGlass.read(halo, "filters.variableBlur.inputRadius") as? NSNumber)
+      PrivateGlass.read(halo, "filters.variableBlur.inputRadius", issues: &issues) as? NSNumber)
     XCTAssertEqual(radius.doubleValue, 23.5)
+    XCTAssertEqual(issues, [])
+  }
+
+  @MainActor func testReadoutsAndExportKeepNativeValuesWhileOverridesApply() async throws {
+    _ = NSApplication.shared
+    let controller = DesignerController()
+    defer { controller.window.orderOut(nil) }
+    controller.window.orderFront(nil)
+    controller.change { $0.haloEnabled = false }
+    let canvas = controller.canvas
+    try await waitUntil("native filter and rim readouts") {
+      !canvas.nativeFilterInputs.isEmpty && !canvas.nativeHighlightInputs.isEmpty
+    }
+    let nativeBlur = try XCTUnwrap(canvas.nativeFilterInputs["inputBlurRadius"])
+    let nativeKey = try XCTUnwrap(canvas.nativeHighlightInputs["keyAmount"])
+    // Two successive overrides: the second readout must not report the first override.
+    for (blur, key) in [(nativeBlur + 1, nativeKey + 0.25), (nativeBlur + 5, nativeKey + 0.5)] {
+      controller.change {
+        $0.filterInputs["inputBlurRadius"] = blur
+        $0.highlightInputs["keyAmount"] = key
+      }
+      canvas.refreshInternals()
+      XCTAssertEqual(liveFilterInput(canvas, "inputBlurRadius"), blur)
+      XCTAssertEqual(try XCTUnwrap(liveHighlightInput(canvas, "keyAmount")), key, accuracy: 0.00001)
+      XCTAssertEqual(canvas.nativeFilterInputs["inputBlurRadius"], nativeBlur)
+      XCTAssertEqual(canvas.nativeHighlightInputs["keyAmount"], nativeKey)
+    }
+    let board = NSPasteboard(name: .init("GlassDesignerTests.\(UUID())"))
+    defer { board.releaseGlobally() }
+    controller.writeSwift(to: board)
+    let source = try XCTUnwrap(board.string(forType: .string))
+    XCTAssertTrue(
+      source.contains("// Native glassBackground.inputBlurRadius = \(nativeBlur)"), source)
+    XCTAssertTrue(source.contains("var filterInputs: [String: Double] = [\"inputBlurRadius\": \(nativeBlur + 5)]"))
+  }
+
+  @MainActor func testStatusLineClearsIssuesThatNoLongerApply() async throws {
+    _ = NSApplication.shared
+    let controller = DesignerController()
+    defer { controller.window.orderOut(nil) }
+    // Before the window is displayed AppKit has not built the glass layers.
+    controller.canvas.refreshInternals()
+    XCTAssertFalse(controller.canvas.issues.isEmpty)
+    XCTAssertEqual(controller.status.stringValue, controller.canvas.issues.joined(separator: " · "))
+    XCTAssertEqual(controller.status.toolTip, controller.status.stringValue)
+    controller.window.orderFront(nil)
+    try await waitUntil("the issue to resolve") { controller.canvas.issues.isEmpty }
+    XCTAssertEqual(controller.status.stringValue, "")
+    XCTAssertNil(controller.status.toolTip)
+  }
+
+  @MainActor func testTintAndFillRenderRecipeHSBAInSRGB() async throws {
+    _ = NSApplication.shared
+    let controller = DesignerController()
+    defer { controller.window.orderOut(nil) }
+    controller.window.orderFront(nil)
+    controller.change {
+      ($0.tintHue, $0.tintSaturation, $0.tintBrightness, $0.tintAlpha) = (0.3, 0.7, 0.8, 0.5)
+      ($0.fillHue, $0.fillSaturation, $0.fillBrightness, $0.fillAlpha) = (0.3, 0.7, 0.8, 1)
+      $0.fillInside = false
+    }
+    controller.canvas.layoutSubtreeIfNeeded()
+    // sRGB HSB (0.3, 0.7, 0.8) is RGB (0.352, 0.8, 0.24); Generic RGB would differ.
+    func assertSRGB(_ color: NSColor?, alpha: Double, line: UInt = #line) throws {
+      let srgb = try XCTUnwrap(color?.usingColorSpace(.sRGB), line: line)
+      for (actual, expected) in [
+        (srgb.redComponent, 0.352), (srgb.greenComponent, 0.8), (srgb.blueComponent, 0.24),
+        (srgb.alphaComponent, alpha),
+      ] {
+        XCTAssertEqual(actual, expected, accuracy: 0.002, line: line)
+      }
+    }
+    let glass = try XCTUnwrap(
+      controller.canvas.container.contentView?.subviews.first as? NSGlassEffectView)
+    try assertSRGB(glass.tintColor, alpha: 0.5)
+    func fills() -> [CALayer] {
+      PrivateGlass.layers(controller.canvas.layer).filter {
+        $0.name == "designer.fill" && $0.backgroundColor?.alpha == 1
+      }
+    }
+    try await waitUntil("opaque fill layers") { !fills().isEmpty }
+    for fill in fills() {
+      try assertSRGB(fill.backgroundColor.flatMap(NSColor.init(cgColor:)), alpha: 1)
+    }
   }
 
   @MainActor func testDetachedPreviewKeepsBothRequestedShadowsAndFitsHalo() async throws {
@@ -420,12 +497,14 @@ final class NativeTests: XCTestCase {
     XCTAssertFalse(preview.styleMask.contains(.titled))
     for mode in 0...2 {
       controller.change { $0.haloMode = mode }
-      try await Task.sleep(for: .milliseconds(100))
-      XCTAssertEqual(canvas.activeHaloMode, mode)
-      XCTAssertTrue(canvas.issues.isEmpty, canvas.issues.joined(separator: "; "))
+      try await waitUntil(
+        "halo mode \(mode) without issues", detail: { canvas.issues.joined(separator: "; ") }
+      ) { canvas.activeHaloMode == mode && !canvas.nativeFilterInputs.isEmpty && canvas.issues.isEmpty }
     }
     controller.toggleSecondary()
-    try await Task.sleep(for: .milliseconds(400))
+    try await waitUntil("the expansion to settle") {
+      canvas.secondaryVisible && !canvas.secondaryAnimating
+    }
     let expanded = canvas.visibleSurfaceBounds.insetBy(
       dx: -controller.parameters.haloMargin, dy: -controller.parameters.haloMargin)
     XCTAssertTrue(
@@ -435,6 +514,37 @@ final class NativeTests: XCTestCase {
     XCTAssertEqual(canvas.mainSurfaceFrame.height, controller.parameters.height + 80 + 40)
     XCTAssertTrue(canvas.issues.isEmpty, canvas.issues.joined(separator: "; "))
   }
+
+  /// Background dragging needs the clicks: a transparent window otherwise lets them fall
+  /// through to the window below wherever its pixels are clear, which includes glass.
+  @MainActor func testDetachedPreviewReceivesClicksSoItCanBeDragged() async throws {
+    _ = NSApplication.shared
+    let controller = DesignerController()
+    defer {
+      controller.window.orderOut(nil)
+      controller.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+    }
+    controller.window.orderFront(nil)
+    controller.change { $0.haloEnabled = false }
+    controller.detachPreview()
+    let preview = try XCTUnwrap(
+      NSApp.windows.first { $0.title == "Glass desktop preview" && $0.isVisible })
+    let canvas = try XCTUnwrap(preview.contentView as? GlassCanvas)
+    XCTAssertTrue(preview.isMovableByWindowBackground)
+    try await waitUntil("the preview's glass") { !canvas.nativeFilterInputs.isEmpty }
+    let glass = canvas.mainSurfaceFrame
+    for (name, point) in [
+      ("glass", CGPoint(x: glass.midX, y: glass.midY)),
+      ("margin", CGPoint(x: glass.minX - 8, y: glass.midY)),
+    ] {
+      try await waitUntil("the window server to route \(name) clicks to the preview") {
+        NSWindow.windowNumber(
+          at: preview.convertPoint(toScreen: point), belowWindowWithWindowNumber: 0)
+          == preview.windowNumber
+      }
+    }
+  }
+
   @MainActor func testShadowFollowsAnInFlightExpansion() async throws {
     _ = NSApplication.shared
     let controller = DesignerController()
@@ -448,39 +558,67 @@ final class NativeTests: XCTestCase {
     }
     let before = controller.canvas.mainSurfaceFrame
     controller.toggleSecondary()
-    try await Task.sleep(for: .milliseconds(180))
-    XCTAssertGreaterThan(controller.canvas.mainSurfaceFrame.height, before.height)
+    try await waitUntil("the shadow to follow the moving expansion") {
+      controller.canvas.mainSurfaceFrame.height > before.height
+        && shadowIsAttached(controller.canvas)
+    }
+    XCTAssertTrue(controller.canvas.secondaryAnimating)
     XCTAssertLessThan(controller.canvas.mainSurfaceFrame.height, before.height + 90)
-    assertShadowAttached(controller.canvas)
     // A parameter edit during motion replaces the animated recipe and settles geometry.
     controller.change { $0.cornerRadius = 24.5 }
-    try await Task.sleep(for: .milliseconds(100))
-    XCTAssertEqual(controller.canvas.mainSurfaceFrame.height, before.height + 90)
+    try await waitUntil("the edited expansion to settle") {
+      !controller.canvas.secondaryAnimating
+        && controller.canvas.mainSurfaceFrame.height == before.height + 90
+    }
     assertShadowAttached(controller.canvas)
   }
 
-  @MainActor func testHaloMaskTracksCurveAndPanelHole() throws {
+  @MainActor func testHaloMaskTracksCurveOrientationAndPanelHoles() throws {
     var p = GlassParameters()
     p.haloCurve.nodes[0].outgoing = CurvePoint(x: 0.25, y: 0.25)
     p.haloCurve.nodes[1].incoming = CurvePoint(x: 0.75, y: 0.75)
     p.haloMargin = 50
     let size = CGSize(width: 700, height: 600)
-    let panel = CGRect(x: 140, y: 200, width: 420, height: 200)
-    func alpha(_ image: CGImage, x: Int, y: Int) throws -> Double {
-      let bytes = try XCTUnwrap(image.dataProvider?.data) as Data
-      return Double(bytes[y * image.bytesPerRow + x * 4 + 3]) / 255
+    let scale = 2.0
+    /// Mask alpha at a point in view coordinates (origin bottom-left), independent of pixel format.
+    func alpha(_ image: CGImage, _ x: Double, _ y: Double) throws -> Double {
+      let context = try XCTUnwrap(
+        CGContext(
+          data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+          bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+      let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+      let row = image.height - 1 - Int(y * scale)
+      return Double(bytes[row * context.bytesPerRow + Int(x * scale) * 4 + 3]) / 255
     }
-    let start = ContinuousClock.now
-    let image = try XCTUnwrap(HaloMask.make(size: size, panels: [panel], p: p, scale: 2))
-    print("Halo mask generation: \(start.duration(to: .now)) for 700×600 pt at 2×")
-    XCTAssertEqual(try alpha(image, x: 700, y: 600), 1, accuracy: 0.01)
-    XCTAssertEqual(try alpha(image, x: 700, y: 350), 0.5, accuracy: 0.03)
-    XCTAssertEqual(try alpha(image, x: 700, y: 250), 0, accuracy: 0.01)
+    // The panel sits low in the canvas, so a vertically flipped mask fails the samples below.
+    let panel = CGRect(x: 140, y: 100, width: 420, height: 200)
+    let image = try XCTUnwrap(HaloMask.make(size: size, panels: [panel], p: p, scale: scale))
+    XCTAssertEqual(image.bitsPerPixel, 8, "Masks carry alpha only")
+    XCTAssertEqual(try alpha(image, 350, 200), 1, accuracy: 0.01)
+    XCTAssertEqual(try alpha(image, 350, 310), p.haloCurve.value(at: 0.8), accuracy: 0.02)
+    XCTAssertEqual(try alpha(image, 350, 60), p.haloCurve.value(at: 0.2), accuracy: 0.02)
+    XCTAssertEqual(try alpha(image, 350, 500), 0, accuracy: 0.01)
+    XCTAssertEqual(try alpha(image, 120, 200), p.haloCurve.value(at: 0.6), accuracy: 0.02)
+
+    // Two panels: the halo surrounds their group; without under-panel blur each panel is cut out.
+    let lower = CGRect(x: 140, y: 100, width: 420, height: 150)
+    let upper = CGRect(x: 140, y: 290, width: 420, height: 80)
     p.haloUnderPanels = false
-    let cutout = try XCTUnwrap(HaloMask.make(size: size, panels: [panel], p: p, scale: 2))
-    XCTAssertEqual(try alpha(cutout, x: 700, y: 600), 0, accuracy: 0.01)
-    XCTAssertEqual(try alpha(cutout, x: 700, y: 350), 0.5, accuracy: 0.03)
+    let cutout = try XCTUnwrap(HaloMask.make(size: size, panels: [lower, upper], p: p, scale: scale))
+    XCTAssertEqual(try alpha(cutout, 350, 175), 0, accuracy: 0.01)
+    XCTAssertEqual(try alpha(cutout, 350, 330), 0, accuracy: 0.01)
+    XCTAssertEqual(try alpha(cutout, 350, 270), 1, accuracy: 0.01, "The gap stays at full strength")
+    XCTAssertEqual(try alpha(cutout, 350, 395), p.haloCurve.value(at: 0.5), accuracy: 0.02)
+
+    p.haloMargin = 160
+    let start = ContinuousClock.now
+    _ = try XCTUnwrap(
+      HaloMask.make(size: CGSize(width: 900, height: 800), panels: [lower, upper], p: p, scale: 2))
+    print("Halo mask generation: \(start.duration(to: .now)) for 900×800 pt, 160 pt margin, at 2×")
   }
+
   @MainActor func testSecondaryMotionKeepsMainSurfaceAnchoredAndShadowAttached() async throws {
     _ = NSApplication.shared
     let controller = DesignerController()
@@ -495,13 +633,13 @@ final class NativeTests: XCTestCase {
       }
       let origin = controller.canvas.mainSurfaceFrame.origin
       controller.toggleSecondary()
-      try await Task.sleep(for: .milliseconds(350))
+      try await waitUntil("effect \(effect) to show") { !controller.canvas.secondaryAnimating }
       XCTAssertEqual(
         controller.canvas.mainSurfaceFrame.origin, origin,
         "Effect \(effect) must keep the main surface anchored")
       assertShadowAttached(controller.canvas)
       controller.toggleSecondary()
-      try await Task.sleep(for: .milliseconds(350))
+      try await waitUntil("effect \(effect) to hide") { !controller.canvas.secondaryAnimating }
       XCTAssertEqual(controller.canvas.mainSurfaceFrame.origin, origin)
       assertShadowAttached(controller.canvas)
     }
@@ -510,18 +648,12 @@ final class NativeTests: XCTestCase {
   @MainActor private func assertShadowAttached(
     _ canvas: GlassCanvas, file: StaticString = #filePath, line: UInt = #line
   ) {
-    guard let shadow = canvas.shadowBounds else {
-      XCTFail("Missing shadow path", file: file, line: line)
-      return
-    }
-    let glass = canvas.visibleSurfaceBounds
-    for (a, b) in [
-      (shadow.minX, glass.minX), (shadow.minY, glass.minY), (shadow.width, glass.width),
-      (shadow.height, glass.height),
-    ] {
-      XCTAssertEqual(a, b, accuracy: 0.001, file: file, line: line)
-    }
+    XCTAssertTrue(
+      shadowIsAttached(canvas),
+      "Shadow \(String(describing: canvas.shadowBounds)) must outline \(canvas.visibleSurfaceBounds)",
+      file: file, line: line)
   }
+
   func testArrowSelectionAppliesImmediatelyAndPreservesKeyboardFocus() async throws {
     try await MainActor.run {
       _ = NSApplication.shared
@@ -567,7 +699,7 @@ final class NativeTests: XCTestCase {
       let source = try XCTUnwrap(board.string(forType: .string))
       XCTAssertTrue(source.contains("23.718281828"))
       XCTAssertTrue(source.contains("var tintHue: Double = 0.3"))
-      let data = try XCTUnwrap(board.data(forType: .init("com.alexgorbatchev.glass-recipe")))
+      let data = try XCTUnwrap(board.data(forType: .glassRecipe))
       XCTAssertEqual(try GlassDocument.load(data).parameters, controller.parameters)
     }
   }
@@ -596,23 +728,27 @@ final class NativeTests: XCTestCase {
     XCTAssertEqual(content.bounds.width, 1576, accuracy: 0.001)
     XCTAssertEqual(content.bounds.height, 830, accuracy: 0.001)
     XCTAssertFalse(controller.window.styleMask.contains(.resizable))
-    func descendants(_ view: NSView) -> [NSView] {
-      [view] + view.subviews.flatMap { descendants($0) }
-    }
-    let inspector = try XCTUnwrap(descendants(content).first { $0 is Inspector })
+    let inspector = try XCTUnwrap(descendants(of: content).first { $0 is Inspector })
     let inspectorBounds = inspector.convert(inspector.bounds, to: content)
-    XCTAssertEqual(controller.canvas.bounds.width, 1088 * 0.8, accuracy: 0.5)
+    let columns = try XCTUnwrap(inspector.superview as? NSStackView)
+    let sidebar = try XCTUnwrap(controller.variants.superview)
+    let sidebarBounds = sidebar.convert(sidebar.bounds, to: content)
+    let canvasBounds = controller.canvas.convert(controller.canvas.bounds, to: content)
+    XCTAssertEqual(canvasBounds.minX, sidebarBounds.maxX + columns.spacing, accuracy: 0.5)
     XCTAssertEqual(
-      inspectorBounds.maxX, content.bounds.maxX - 18, accuracy: 1,
-      "The columns must fill the wider window, with the inspector at its right edge")
-    try await Task.sleep(for: .milliseconds(400))
-    controller.canvas.refreshInternals()
-    XCTAssertFalse(
-      controller.canvas.observed.isEmpty, "Actual glassBackground layers must be built")
+      canvasBounds.maxX, inspectorBounds.minX - columns.spacing, accuracy: 0.5,
+      "The stage must take the space between the sidebar and the inspector")
+    XCTAssertEqual(
+      inspectorBounds.maxX, columns.convert(columns.bounds, to: content).maxX, accuracy: 1,
+      "The inspector must sit at the right edge of the columns")
+    try await waitUntil("native filter and rim readouts") {
+      !controller.canvas.nativeFilterInputs.isEmpty
+        && !controller.canvas.nativeHighlightInputs.isEmpty
+    }
     XCTAssertTrue(
       controller.canvas.issues.isEmpty, controller.canvas.issues.joined(separator: "; "))
-    XCTAssertNotNil(controller.canvas.observed["inputBlurRadius"])
-    XCTAssertNotNil(controller.canvas.observedHighlights["keyAmount"])
+    XCTAssertNotNil(controller.canvas.nativeFilterInputs["inputBlurRadius"])
+    XCTAssertNotNil(controller.canvas.nativeHighlightInputs["keyAmount"])
     let capturing = ProcessInfo.processInfo.environment["GLASS_CAPTURE"] == "1"
     let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
       .appendingPathComponent(".tmp/verification")
@@ -623,36 +759,33 @@ final class NativeTests: XCTestCase {
       NSApp.activate()
     }
     for index in 0..<6 {
-      let item = NSMenuItem()
-      item.tag = index
-      controller.inspectorTab(item)
+      controller.selectInspector(index)
       controller.window.contentView?.layoutSubtreeIfNeeded()
       XCTAssertFalse(controller.window.contentView!.hasAmbiguousLayout)
       if capturing {
+        // The window server composites glass asynchronously; captures only need it to settle.
         try await Task.sleep(for: .milliseconds(200))
         try capture(
           controller.window, to: directory.appendingPathComponent("inspector-\(index).png"))
       }
     }
     // Change a private filter using the real layer, then remove it and require the native recipe.
-    let native = try XCTUnwrap(controller.canvas.observed["inputBlurRadius"])
+    let native = try XCTUnwrap(controller.canvas.nativeFilterInputs["inputBlurRadius"])
     controller.change { $0.filterInputs["inputBlurRadius"] = 9.125 }
-    try await Task.sleep(for: .milliseconds(120))
-    controller.canvas.refreshInternals()
-    controller.canvas.refreshInternals()
-    XCTAssertEqual(controller.canvas.observed["inputBlurRadius"], 9.125)
+    try await waitUntil("the override on the live layer") {
+      liveFilterInput(controller.canvas, "inputBlurRadius") == 9.125
+    }
     controller.change { $0.filterInputs = [:] }
-    try await Task.sleep(for: .milliseconds(120))
-    controller.canvas.refreshInternals()
-    XCTAssertEqual(controller.canvas.observed["inputBlurRadius"], native)
+    try await waitUntil("the native value on the rebuilt layer") {
+      liveFilterInput(controller.canvas, "inputBlurRadius") == native
+    }
+    XCTAssertEqual(controller.canvas.nativeFilterInputs["inputBlurRadius"], native)
 
     let source = try SwiftExport.source(
-      for: controller.parameters, observed: controller.canvas.observed)
-    try source.write(
-      to: directory.appendingPathComponent("DesignedGlass.swift"), atomically: true, encoding: .utf8
-    )
+      for: controller.parameters, nativeFilterInputs: controller.canvas.nativeFilterInputs)
+    try assertExportCompiles(source, named: "DesignedGlass")
     print(
-      "Native probe: filters=\(controller.canvas.observed.count) rim=\(controller.canvas.observedHighlights.count) issues=\(controller.canvas.issues)"
+      "Native probe: filters=\(controller.canvas.nativeFilterInputs.count) rim=\(controller.canvas.nativeHighlightInputs.count) issues=\(controller.canvas.issues)"
     )
   }
 
@@ -673,50 +806,54 @@ final class NativeTests: XCTestCase {
     defer { controller.window.orderOut(nil) }
     controller.window.orderFront(nil)
     controller.window.contentView?.layoutSubtreeIfNeeded()
+    var issues: [String] = []
     for variant in GlassCatalog.variants.indices {
       controller.change {
         $0.variant = variant
         $0.haloEnabled = false
       }
-      try await Task.sleep(for: .milliseconds(30))
       let glass = try XCTUnwrap(
         controller.canvas.container.contentView?.subviews.first as? NSGlassEffectView)
-      XCTAssertEqual((PrivateGlass.read(glass, "_variant") as? NSNumber)?.intValue, variant)
+      XCTAssertEqual(
+        (PrivateGlass.read(glass, "_variant", issues: &issues) as? NSNumber)?.intValue, variant)
     }
     controller.loadPreset(1)
     for subvariant in GlassCatalog.subvariants {
       controller.change { $0.subvariant = subvariant }
       let glass = try XCTUnwrap(
         controller.canvas.container.contentView?.subviews.first as? NSGlassEffectView)
-      XCTAssertEqual(PrivateGlass.read(glass, "_subvariant") as? String, subvariant)
+      XCTAssertEqual(PrivateGlass.read(glass, "_subvariant", issues: &issues) as? String, subvariant)
     }
+    XCTAssertEqual(issues, [])
     controller.loadPreset(0)
-    try await Task.sleep(for: .milliseconds(150))
-    controller.canvas.refreshInternals()
-    let nativeRim = controller.canvas.observedHighlights
+    try await waitUntil("native rim readouts") {
+      !controller.canvas.nativeHighlightInputs.isEmpty
+    }
+    let nativeRim = controller.canvas.nativeHighlightInputs
     controller.change { p in
       for field in GlassCatalog.filters {
         p.filterInputs[field.key] = (field.range.lowerBound + field.range.upperBound) / 2
       }
       for field in GlassCatalog.highlights { p.highlightInputs[field.key] = 0.625 }
     }
-    try await Task.sleep(for: .milliseconds(150))
-    controller.canvas.refreshInternals()
-    controller.canvas.refreshInternals()
-    for (key, value) in controller.parameters.filterInputs {
-      XCTAssertEqual(try XCTUnwrap(controller.canvas.observed[key]), value, accuracy: 0.00001, key)
-    }
-    for (key, value) in controller.parameters.highlightInputs {
-      XCTAssertEqual(
-        try XCTUnwrap(controller.canvas.observedHighlights[key]), value, accuracy: 0.00001, key)
+    let canvas = controller.canvas
+    let parameters = controller.parameters
+    try await waitUntil("every override on the live layers") {
+      parameters.filterInputs.allSatisfy { key, value in
+        liveFilterInput(canvas, key).map { abs($0 - value) < 0.00001 } == true
+      }
+        && parameters.highlightInputs.allSatisfy { key, value in
+          liveHighlightInput(canvas, key).map { abs($0 - value) < 0.00001 } == true
+        }
     }
     controller.change {
       $0.highlightInputs = [:]
       $0.filterInputs = [:]
     }
-    try await Task.sleep(for: .milliseconds(150))
-    controller.canvas.refreshInternals()
-    XCTAssertEqual(controller.canvas.observedHighlights, nativeRim)
+    try await waitUntil("native rim readouts after removing overrides") {
+      !controller.canvas.nativeHighlightInputs.isEmpty
+    }
+    XCTAssertEqual(controller.canvas.nativeHighlightInputs, nativeRim)
     XCTAssertTrue(
       controller.canvas.issues.isEmpty, controller.canvas.issues.joined(separator: "; "))
   }

@@ -1,6 +1,16 @@
 import AppKit
 import UniformTypeIdentifiers
 
+extension UTType {
+  /// Recipe JSON on the clipboard; declared under UTExportedTypeDeclarations in Info.plist.
+  static let glassRecipe = UTType(
+    exportedAs: "com.alexgorbatchev.glass-recipe", conformingTo: .json)
+}
+
+extension NSPasteboard.PasteboardType {
+  static let glassRecipe = Self(UTType.glassRecipe.identifier)
+}
+
 @MainActor
 public final class DesignerController: NSObject, NSWindowDelegate {
   public let window: NSWindow
@@ -15,11 +25,13 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     shortcut: "⇧⌘L")
   private let inspector = Inspector()
   private let backdrop = BackdropView()
-  private let status = label("", size: 11, secondary: true)
-  private var targets: [ActionTarget] = []
+  let status = label("", size: 11, secondary: true)
+  private let actions = ActionBindings()
   private var previewWindow: NSWindow?
   private var detachedCanvas: GlassCanvas?
   private var saveURL: URL?
+  /// Readout issues currently shown in the status line.
+  private var shownIssues: String?
 
   public override init() {
     window = NSWindow(
@@ -32,6 +44,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     window.delegate = self
     window.center()
     buildContent()
+    canvas.movesSurfaces = true
     variants.onSelect = { [weak self] index in self?.change { $0.variant = index } }
     subvariants.onSelect = { [weak self] index in
       self?.change { $0.subvariant = index == 0 ? nil : GlassCatalog.subvariants[index - 1] }
@@ -48,13 +61,6 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     window.makeFirstResponder(variants.table)
   }
 
-  private func bind(_ control: NSControl, _ handler: @escaping (NSControl) -> Void) {
-    let target = ActionTarget(handler)
-    targets.append(target)
-    control.target = target
-    control.action = #selector(ActionTarget.fire(_:))
-  }
-
   private func button(_ title: String, action: Selector) -> NSButton {
     actionButton(title, target: self, action: action)
   }
@@ -69,12 +75,11 @@ public final class DesignerController: NSObject, NSWindowDelegate {
       labels: ["Regular", "Clear", "Blur"], trackingMode: .momentary, target: nil, action: nil)
     presets.font = DesignerFont.font(size: 11)
     presets.controlSize = .regular
-    bind(presets) { [weak self] sender in
+    actions.bind(presets) { [weak self] sender in
       let index = (sender as! NSSegmentedControl).selectedSegment
       self?.loadPreset(index)
     }
     let copy = button("Copy Swift  ⇧⌘C", action: #selector(copySwift))
-    copy.hasDestructiveAction = false
     let titleRow = NSStackView(views: [title, subtitle, NSView(), status])
     titleRow.alignment = .firstBaseline
     titleRow.spacing = 12
@@ -93,15 +98,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     stage.wantsLayer = true
     stage.layer?.cornerRadius = 14
     stage.layer?.masksToBounds = true
-    let backgrounds = NSSegmentedControl(
-      labels: ["Landscape", "Light", "Dark", "Text"], trackingMode: .selectOne, target: nil,
-      action: nil)
-    backgrounds.controlSize = .small
-    backgrounds.font = DesignerFont.font(size: 10)
-    backgrounds.selectedSegment = 0
-    bind(backgrounds) { [weak self] sender in
-      self?.backdrop.mode = (sender as! NSSegmentedControl).selectedSegment
-    }
+    let stageControls = buildStageControls()
     let tools = NSStackView(views: [
       presets,
       button("Pop  ⌘P", action: #selector(playPop)),
@@ -120,7 +117,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     for view in [titleRow, tools] {
       view.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
     }
-    let stageColumn = vertical([backgrounds, stage], spacing: 12)
+    let stageColumn = vertical([stageControls, stage], spacing: 12)
     stage.widthAnchor.constraint(equalTo: stageColumn.widthAnchor).isActive = true
     stage.widthAnchor.constraint(greaterThanOrEqualToConstant: 560).isActive = true
     stage.heightAnchor.constraint(greaterThanOrEqualToConstant: 500).isActive = true
@@ -147,6 +144,55 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     window.initialFirstResponder = variants.table
   }
 
+  /// Scene, theme, and wallpaper of the screen behind the embedded glass; not part of the recipe.
+  private func buildStageControls() -> NSView {
+    func segmented(_ labels: [String]) -> NSSegmentedControl {
+      let control = NSSegmentedControl(
+        labels: labels, trackingMode: .selectOne, target: nil, action: nil)
+      control.controlSize = .small
+      control.font = DesignerFont.font(size: 10)
+      return control
+    }
+    let scenes = segmented(BackdropScene.allCases.map(\.title))
+    let themes = segmented(BackdropTheme.allCases.map(\.title))
+    let wallpapers = NSPopUpButton(frame: .zero, pullsDown: false)
+    wallpapers.controlSize = .small
+    wallpapers.font = DesignerFont.font(size: 10)
+    wallpapers.setAccessibilityLabel("Wallpaper")
+    let installed = backdrop.installedWallpapers
+    wallpapers.addItems(withTitles: installed.map(\.name))
+    backdrop.onIssue = { [weak self] in self?.showStatus($0) }
+    // Start from what the screen shows now: the current desktop picture and system appearance.
+    backdrop.wallpaper = installed.first
+    backdrop.theme =
+      NSApplication.shared.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+      ? .dark : .light
+    scenes.selectedSegment = backdrop.scene.rawValue
+    themes.selectedSegment = backdrop.theme.rawValue
+    wallpapers.isEnabled = backdrop.scene.showsWallpaper
+    actions.bind(scenes) { [weak self] sender in
+      guard let self,
+        let scene = BackdropScene(rawValue: (sender as! NSSegmentedControl).selectedSegment)
+      else { return }
+      backdrop.scene = scene
+      wallpapers.isEnabled = scene.showsWallpaper
+    }
+    actions.bind(themes) { [weak self] sender in
+      guard let theme = BackdropTheme(rawValue: (sender as! NSSegmentedControl).selectedSegment)
+      else { return }
+      self?.backdrop.theme = theme
+    }
+    actions.bind(wallpapers) { [weak self] sender in
+      let index = (sender as! NSPopUpButton).indexOfSelectedItem
+      guard installed.indices.contains(index) else { return }
+      self?.backdrop.wallpaper = installed[index]
+    }
+    let row = NSStackView(views: [scenes, themes, wallpapers])
+    row.spacing = 10
+    row.alignment = .centerY
+    return row
+  }
+
   func change(_ mutation: (inout GlassParameters) -> Void) {
     var next = parameters
     mutation(&next)
@@ -154,9 +200,9 @@ public final class DesignerController: NSObject, NSWindowDelegate {
       try next.validate()
       parameters = next
       sync()
-      status.stringValue = ""
+      showStatus("")
     } catch {
-      status.stringValue = error.localizedDescription
+      showStatus(error.localizedDescription)
       inspector.sync(parameters, canvas: canvas)
     }
   }
@@ -168,7 +214,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
       parameters.haloEnabled = true
     }
     sync()
-    status.stringValue = ""
+    showStatus("")
   }
 
   private func sync() {
@@ -181,16 +227,26 @@ public final class DesignerController: NSObject, NSWindowDelegate {
         parameters.subvariant.flatMap { GlassCatalog.subvariants.firstIndex(of: $0) }.map { $0 + 1 }
           ?? 0)
       inspector.sync(parameters, canvas: canvas)
-    } catch { status.stringValue = error.localizedDescription }
+    } catch { showStatus(error.localizedDescription) }
   }
 
   private func syncReadout() {
     inspector.sync(parameters, canvas: canvas)
-    let allIssues = canvas.issues + (detachedCanvas?.issues ?? [])
-    if !allIssues.isEmpty {
-      status.stringValue = allIssues.joined(separator: " · ")
-      status.toolTip = status.stringValue
+    let issues = (canvas.issues + (detachedCanvas?.issues ?? [])).joined(separator: " · ")
+    if !issues.isEmpty {
+      showStatus(issues)
+      shownIssues = issues
+    } else if let shownIssues {
+      // Resolved issues leave the status line, unless a newer message already replaced them.
+      if status.stringValue == shownIssues { showStatus("") }
+      self.shownIssues = nil
     }
+  }
+
+  /// The status line truncates; its tooltip carries the full message.
+  private func showStatus(_ message: String) {
+    status.stringValue = message
+    status.toolTip = message.isEmpty ? nil : message
   }
 
   @objc public func copySwift() { writeSwift(to: .general) }
@@ -198,17 +254,18 @@ public final class DesignerController: NSObject, NSWindowDelegate {
   func writeSwift(to pasteboard: NSPasteboard) {
     do {
       canvas.refreshInternals()
-      let swift = try SwiftExport.source(for: parameters, observed: canvas.observed)
+      let swift = try SwiftExport.source(
+        for: parameters, nativeFilterInputs: canvas.nativeFilterInputs)
       let json = try GlassDocument(parameters: parameters).data()
       pasteboard.clearContents()
       guard pasteboard.setString(swift, forType: .string),
-        pasteboard.setData(json, forType: .init("com.alexgorbatchev.glass-recipe"))
+        pasteboard.setData(json, forType: .glassRecipe)
       else {
         throw RecipeError.invalid("Unable to write to clipboard")
       }
-      status.stringValue =
-        "Copied Swift parameters · exact values, API mapping, and native readouts"
-    } catch { status.stringValue = error.localizedDescription }
+      showStatus(
+        "Copied Swift parameters · exact values, API mapping, and native readouts")
+    } catch { showStatus(error.localizedDescription) }
   }
 
   @objc public func copyJSON() {
@@ -219,16 +276,16 @@ public final class DesignerController: NSObject, NSWindowDelegate {
       else {
         throw RecipeError.invalid("Unable to write to clipboard")
       }
-      status.stringValue = "Copied recipe JSON"
-    } catch { status.stringValue = error.localizedDescription }
+      showStatus("Copied recipe JSON")
+    } catch { showStatus(error.localizedDescription) }
   }
 
   @objc public func pasteRecipe() {
     guard
-      let data = NSPasteboard.general.data(forType: .init("com.alexgorbatchev.glass-recipe"))
+      let data = NSPasteboard.general.data(forType: .glassRecipe)
         ?? NSPasteboard.general.string(forType: .string)?.data(using: .utf8)
     else {
-      status.stringValue = "Clipboard has no recipe"
+      showStatus("Clipboard has no recipe")
       return
     }
     importData(data)
@@ -239,10 +296,10 @@ public final class DesignerController: NSObject, NSWindowDelegate {
       let document = try GlassDocument.load(data)
       parameters = document.parameters
       sync()
-      status.stringValue = "Recipe loaded"
+      showStatus("Recipe loaded")
       return true
     } catch {
-      status.stringValue = "Recipe unchanged: \(error.localizedDescription)"
+      showStatus("Recipe unchanged: \(error.localizedDescription)")
       return false
     }
   }
@@ -255,7 +312,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
       MainActor.assumeIsolated {
         guard response == .OK, let self, let url = panel.url else { return }
         do { if self.importData(try Data(contentsOf: url)) { self.saveURL = url } } catch {
-          self.status.stringValue = error.localizedDescription
+          self.showStatus(error.localizedDescription)
         }
       }
     }
@@ -271,8 +328,8 @@ public final class DesignerController: NSObject, NSWindowDelegate {
         do {
           try GlassDocument(parameters: self.parameters).data().write(to: url, options: .atomic)
           self.saveURL = url
-          self.status.stringValue = "Saved \(url.lastPathComponent)"
-        } catch { self.status.stringValue = error.localizedDescription }
+          self.showStatus("Saved \(url.lastPathComponent)")
+        } catch { self.showStatus(error.localizedDescription) }
       }
     }
   }
@@ -302,7 +359,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
       previewWindow.orderOut(nil)
       self.previewWindow = nil
       detachedCanvas = nil
-      status.stringValue = ""
+      showStatus("")
       return
     }
     let preview = NSWindow(
@@ -312,6 +369,9 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     preview.isOpaque = false
     preview.backgroundColor = .clear
     preview.isMovableByWindowBackground = true
+    // A transparent window is click-through wherever its pixels are clear, including over glass,
+    // so clicks would reach the window below instead of starting a drag. Take every click.
+    preview.ignoresMouseEvents = false
     preview.isReleasedWhenClosed = false
     preview.level = .floating
     preview.hidesOnDeactivate = false
@@ -326,7 +386,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
     preview.center()
     preview.orderFront(nil)
     window.makeKeyAndOrderFront(nil)
-    status.stringValue = "Drag the desktop preview over other windows · ⌘D closes it"
+    showStatus("Drag the desktop preview over other windows · ⌘D closes it")
   }
 
   private func resizeDetached() {

@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-23 12:00
-last_modified: 2026-10-23 12:47
+last_modified: 2026-10-24 10:48
 status: current
 ---
 
@@ -12,7 +12,7 @@ This reference records the source contracts used by the designer. It is for agen
 
 The sibling `simple-ptt/src/overlay/glass.rs` supplies evidence for progressive halo blur and masks. Its regular/clear halo styles are explicit renderer choices here, alongside progressive blur; there is no automatic fallback. `simple-ptt/src/overlay/private_effects.rs` supplies face color matrix and rim hooks. The designer starts with sparse override dictionaries empty.
 
-`sol/macos/sol-macOS/managers/GlassLab.swift` and `sol/macos/sol-macOS/views/GlassLabWindow.swift` supply the material catalog, subvariants, private state controls, additional refraction/bleed/shadow inputs, fill placement, glass on/off, titled preview, and native keyboard-driven lists. The designer's generic presets are Regular, Clear, and Halo. The default is regular glass without tint or halo. Numeric slider ranges combine those projects' exploratory ranges; they are not documented Core Animation limits.
+`sol/macos/sol-macOS/managers/GlassLab.swift` and `sol/macos/sol-macOS/views/GlassLabWindow.swift` supply the material catalog, subvariants, private state controls, additional refraction/bleed/shadow inputs, fill placement, glass on/off, titled preview, and native keyboard-driven lists. The designer's generic presets are Regular, Clear, and Blur. The default is regular glass without tint or halo. Numeric slider ranges combine those projects' exploratory ranges; they are not documented Core Animation limits.
 
 The native recipe, rather than a copied numerical snapshot, remains authoritative for missing overrides. On macOS 26.6.2 the native clear rim spread reads approximately 2.7475, while simple-ptt's optional override has a different tuned value. Copying native readouts into overrides automatically would change this contract.
 
@@ -31,9 +31,9 @@ Private hooks are isolated and checked at runtime:
 
 ## Export semantics
 
-Swift output contains every recipe field, exact floating-point literals, and platform/API mapping comments. It compiles independently, with no import of this project. It specifies values for an agent to implement; it does not claim to provide an executable renderer. JSON schema version 2 is the editable interchange format; version 1 is unsupported. The plain Swift clipboard representation carries JSON alongside it under `com.alexgorbatchev.glass-recipe`.
+Swift output contains every recipe field, exact floating-point literals, and platform/API mapping comments. It compiles independently, with no import of this project. It specifies values for an agent to implement; it does not claim to provide an executable renderer. Tint and fill are sRGB HSBA, the color space of `NSColor(hue:saturation:brightness:alpha:)`; a calibrated (Generic RGB) constructor renders visibly different colors. Native comments list AppKit's filter values captured before any override was written. JSON schema version 3 is the editable interchange format; earlier versions are unsupported. The plain Swift clipboard representation carries JSON alongside it under `com.alexgorbatchev.glass-recipe`, an exported UTI conforming to `public.json`.
 
-Halo mask X runs from outside edge to panel edge. The curve contains an ordered array of anchors, each with incoming and outgoing handles. Adjacent anchors define a cubic Bézier segment. Endpoint strengths are held outside their X positions; active X handles stay within their segment. Inserting a point on the curve splits its segment without changing its shape. When under-panel blur is disabled, each panel outline is cut out. Dimming follows the same mask, so raising the outer endpoint also raises outer-edge dimming. Shadows use a separate unclipped layer; they can coexist with the detached window's system shadow.
+Halo mask X runs from outside edge to panel edge. The curve contains an ordered array of anchors, each with incoming and outgoing handles and a kind. Adjacent anchors define a cubic Bézier segment. Endpoint strengths are held outside their X positions; active X handles stay within their segment. The kind records editing intent only: corner handles are independent, smooth handles lie on one line through the anchor, and symmetric handles also share one length; endpoints are corners. Inserting a point on the curve splits its segment without changing its shape. The mask is alpha-only, the channel `variableBlur` reads as blur strength. When under-panel blur is disabled, each panel outline is cut out. Dimming follows the same mask, so raising the outer endpoint also raises outer-edge dimming. Shadows use a separate unclipped layer; they can coexist with the detached window's system shadow.
 
 ## Similar tools
 

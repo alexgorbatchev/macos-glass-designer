@@ -1,15 +1,15 @@
 import Foundation
 
-public struct NumericField: @unchecked Sendable {
+public struct NumericField: Sendable {
   public let title: String
   public let key: String
-  public let path: WritableKeyPath<GlassParameters, Double>
+  public let path: any WritableKeyPath<GlassParameters, Double> & Sendable
   public let range: ClosedRange<Double>
   public let unit: String
   public let help: String
 
   init(
-    _ title: String, _ key: String, _ path: WritableKeyPath<GlassParameters, Double>,
+    _ title: String, _ key: String, _ path: any WritableKeyPath<GlassParameters, Double> & Sendable,
     _ range: ClosedRange<Double>, _ unit: String = "", help: String
   ) {
     self.title = title

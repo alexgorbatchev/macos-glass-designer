@@ -1,6 +1,6 @@
 import Foundation
 
-/// Platform-independent recipe. Distances are points, times seconds, colors HSBA in 0...1.
+/// Platform-independent recipe. Distances are points, times seconds, colors sRGB HSBA in 0...1.
 public struct GlassParameters: Codable, Equatable, Sendable {
   public var glassEnabled = true
   public var windowTitled = false
@@ -56,7 +56,8 @@ public struct GlassParameters: Codable, Equatable, Sendable {
 }
 
 public struct GlassDocument: Codable, Equatable, Sendable {
-  public var schemaVersion = 2
+  public static let currentSchemaVersion = 3
+  public private(set) var schemaVersion = Self.currentSchemaVersion
   public var parameters: GlassParameters
   public init(parameters: GlassParameters) { self.parameters = parameters }
 
@@ -68,12 +69,42 @@ public struct GlassDocument: Codable, Equatable, Sendable {
   }
 
   public static func load(_ data: Data) throws -> Self {
-    let document = try JSONDecoder().decode(Self.self, from: data)
-    guard document.schemaVersion == 2 else {
-      throw RecipeError.invalid("Unsupported schema version")
+    /// Other schema versions have different fields; check the version before decoding them.
+    struct Header: Decodable { let schemaVersion: Int }
+    let decoder = JSONDecoder()
+    do {
+      let version = try decoder.decode(Header.self, from: data).schemaVersion
+      guard version == currentSchemaVersion else {
+        throw RecipeError.invalid("Unsupported schema version \(version)")
+      }
+      let document = try decoder.decode(Self.self, from: data)
+      try document.parameters.validate()
+      return document
+    } catch let error as DecodingError {
+      throw RecipeError.invalid(describe(error))
     }
-    try document.parameters.validate()
-    return document
+  }
+
+  private static func describe(_ error: DecodingError) -> String {
+    func path(_ keys: [any CodingKey]) -> String {
+      let joined = keys.map { key in key.intValue.map { "[\($0)]" } ?? ".\(key.stringValue)" }
+        .joined()
+      return joined.isEmpty ? "the document" : String(joined.drop { $0 == "." })
+    }
+    switch error {
+    case .keyNotFound(let key, let context):
+      return "Missing field \(path(context.codingPath + [key]))"
+    case .valueNotFound(_, let context):
+      return "Missing value for \(path(context.codingPath))"
+    case .typeMismatch(_, let context):
+      return "Wrong type for \(path(context.codingPath))"
+    case .dataCorrupted(let context) where context.codingPath.isEmpty:
+      return "The clipboard or file is not JSON"
+    case .dataCorrupted(let context):
+      return "Invalid value for \(path(context.codingPath))"
+    @unknown default:
+      return error.localizedDescription
+    }
   }
 }
 

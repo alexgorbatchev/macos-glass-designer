@@ -15,6 +15,47 @@ final class RecipeTests: XCTestCase {
     XCTAssertEqual(try GlassDocument.load(GlassDocument(parameters: p).data()).parameters, p)
   }
 
+  func testLoadErrorsNameTheSchemaVersionOrTheFaultyField() throws {
+    func message(_ json: String) -> String? {
+      do {
+        _ = try GlassDocument.load(Data(json.utf8))
+        return nil
+      } catch { return error.localizedDescription }
+    }
+    // Older documents fail on the version, before their different fields are decoded.
+    XCTAssertEqual(
+      message(#"{"schemaVersion":1,"parameters":{"cornerRadius":12}}"#),
+      "Unsupported schema version 1")
+    let valid = try JSONSerialization.jsonObject(
+      with: GlassDocument(parameters: GlassParameters()).data()) as! [String: Any]
+    func variant(_ edit: (inout [String: Any]) -> Void) throws -> String {
+      var document = valid
+      edit(&document)
+      return String(decoding: try JSONSerialization.data(withJSONObject: document), as: UTF8.self)
+    }
+    XCTAssertEqual(
+      message(try variant { document in
+        var parameters = document["parameters"] as! [String: Any]
+        parameters["cornerRadius"] = nil
+        document["parameters"] = parameters
+      }),
+      "Missing field parameters.cornerRadius")
+    XCTAssertEqual(
+      message(try variant { document in
+        var parameters = document["parameters"] as! [String: Any]
+        var curve = parameters["haloCurve"] as! [String: Any]
+        var nodes = curve["nodes"] as! [[String: Any]]
+        nodes[1]["position"] = "middle"
+        curve["nodes"] = nodes
+        parameters["haloCurve"] = curve
+        document["parameters"] = parameters
+      }),
+      "Wrong type for parameters.haloCurve.nodes[1].position")
+    XCTAssertEqual(
+      message(try variant { $0["schemaVersion"] = nil }), "Missing field schemaVersion")
+    XCTAssertEqual(message("Copied Swift parameters"), "The clipboard or file is not JSON")
+  }
+
   func testInvalidPrivateEnumsAndUnknownFilterKeysAreRejectedBeforeAppKit() {
     for value in [-1, 3, 42] {
       var p = GlassParameters()
@@ -45,10 +86,10 @@ final class RecipeTests: XCTestCase {
     p.haloCurve.moveNode(1, to: CurvePoint(x: 0.8, y: 0.9))
     p.haloCurve.nodes[0].outgoing.y = 0.4
     p.haloCurve.nodes[1].incoming.y = 0.7
-    XCTAssertEqual(p.haloStrength(at: 0), 0.3)
-    XCTAssertEqual(p.haloStrength(at: 1), 0.9)
-    XCTAssertGreaterThan(p.haloStrength(at: 0.5), 0.3)
-    XCTAssertLessThan(p.haloStrength(at: 0.5), 0.9)
+    XCTAssertEqual(p.haloCurve.value(at: 0), 0.3)
+    XCTAssertEqual(p.haloCurve.value(at: 1), 0.9)
+    XCTAssertGreaterThan(p.haloCurve.value(at: 0.5), 0.3)
+    XCTAssertLessThan(p.haloCurve.value(at: 0.5), 0.9)
   }
 
   func testSwiftExportContainsEveryParameterWithoutRounding() throws {
@@ -57,7 +98,7 @@ final class RecipeTests: XCTestCase {
     p.tintHue = 0.718281828
     p.subvariant = "menu"
     p.filterInputs = ["inputBlurRadius": 6.125]
-    let source = try SwiftExport.source(for: p, observed: ["inputBlurRadius": 6.125])
+    let source = try SwiftExport.source(for: p, nativeFilterInputs: ["inputBlurRadius": 6.125])
     for child in Mirror(reflecting: p).children {
       XCTAssertTrue(source.contains("var \(child.label!):"), child.label!)
     }
@@ -66,11 +107,9 @@ final class RecipeTests: XCTestCase {
     XCTAssertTrue(source.contains("inputBlurRadius"))
     XCTAssertTrue(source.contains("NSGlassEffectView"))
     XCTAssertTrue(source.contains("glassBackground"))
-    let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-      .appendingPathComponent(".tmp/verification")
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    try source.write(
-      to: directory.appendingPathComponent("DesignedGlass-with-overrides.swift"), atomically: true,
-      encoding: .utf8)
+    try assertExportCompiles(source, named: "DesignedGlass-with-overrides")
+    try assertExportCompiles(
+      try SwiftExport.source(for: GlassParameters(), nativeFilterInputs: [:]),
+      named: "DesignedGlass-defaults")
   }
 }

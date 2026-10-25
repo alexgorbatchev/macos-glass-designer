@@ -6,7 +6,9 @@ final class Inspector: NSView {
     labels: ["Surface", "Blur", "Shadow", "Filter", "Rim", "Motion"],
     trackingMode: .selectOne, target: nil, action: nil)
   private let scroll = NSScrollView()
-  private var targets: [ActionTarget] = []
+  private let tabActions = ActionBindings()
+  /// Targets of the current section; replaced whenever another inspector is shown.
+  private let sectionActions = ActionBindings()
   private var syncs: [(GlassParameters, GlassCanvas) -> Void] = []
   private var current = GlassParameters()
   var onChange: (((inout GlassParameters) -> Void) -> Void)?
@@ -22,7 +24,7 @@ final class Inspector: NSView {
     tabs.segmentDistribution = .fillEqually
     tabs.controlSize = .small
     tabs.font = DesignerFont.font(size: 10)
-    bind(tabs) { [weak self] _ in self?.buildSection() }
+    tabActions.bind(tabs) { [weak self] _ in self?.buildSection() }
     scroll.documentView = document
     scroll.hasVerticalScroller = true
     scroll.drawsBackground = false
@@ -50,13 +52,6 @@ final class Inspector: NSView {
     buildSection()
   }
 
-  private func bind(_ control: NSControl, _ callback: @escaping (NSControl) -> Void) {
-    let target = ActionTarget(callback)
-    targets.append(target)
-    control.target = target
-    control.action = #selector(ActionTarget.fire(_:))
-  }
-
   func sync(_ parameters: GlassParameters, canvas: GlassCanvas) {
     current = parameters
     lastCanvas = canvas
@@ -64,8 +59,7 @@ final class Inspector: NSView {
   }
 
   private func buildSection() {
-    // Retain only the tab target; controls from the old section no longer own actions.
-    targets = Array(targets.prefix(1))
+    sectionActions.removeAll()
     syncs = []
     form.removeFromSuperview()
     form = vertical([], spacing: 13)
@@ -103,17 +97,41 @@ final class Inspector: NSView {
       syncs.append { p, _ in
         curve.curve = p.haloCurve
       }
+      let addPoint = actionButton("Add point", target: nil, action: nil)
+      sectionActions.bind(addPoint) { _ in curve.addPoint() }
+      let deletePoint = actionButton("Delete point", target: nil, action: nil)
+      sectionActions.bind(deletePoint) { _ in curve.deleteSelectedPoint() }
+      // Commits immediately, like the other segmented choices.
+      let kinds = NSSegmentedControl(
+        labels: CurvePointKind.allCases.map(\.title), trackingMode: .selectOne, target: nil,
+        action: nil)
+      kinds.controlSize = .small
+      kinds.font = DesignerFont.font(size: 10)
+      kinds.setAccessibilityLabel("Point type")
+      sectionActions.bind(kinds) { sender in
+        let index = (sender as! NSSegmentedControl).selectedSegment
+        guard CurvePointKind.allCases.indices.contains(index) else { return }
+        curve.setSelectedKind(CurvePointKind.allCases[index])
+      }
+      let tools = NSStackView(views: [addPoint, deletePoint, NSView(), kinds])
+      tools.alignment = .centerY
+      add(tools)
       let instructions = NSTextField(
         wrappingLabelWithString:
-          "Drag points and handles. Double-click to add a point. Tab selects points; arrows move them. Delete removes the selection."
+          "Double-click or Add point to add a point on the curve; Delete removes it. Corner points turn sharply; smooth points keep their handles on one line; symmetric handles also match in length. ⌥-click a point to switch corner and smooth, or right-click it. Tab selects points; arrows move them, Shift moves faster."
       )
       instructions.font = DesignerFont.font(size: 10)
       instructions.textColor = .secondaryLabelColor
       add(instructions)
-      let selection = label(
-        "2 points · Select a point to edit its handles", size: 10, secondary: true)
+      let selection = label("", size: 10, secondary: true)
       selection.lineBreakMode = .byTruncatingTail
-      curve.onSelectionChange = { selection.stringValue = $0 }
+      curve.onSelectionChange = { [unowned curve] in
+        selection.stringValue = curve.selectionSummary
+        deletePoint.isEnabled = curve.canDeleteSelection
+        kinds.isEnabled = curve.canChangeKind
+        kinds.selectedSegment =
+          curve.selectedKind.flatMap(CurvePointKind.allCases.firstIndex) ?? -1
+      }
       add(selection)
       button("Reset curve") { [weak self] in self?.onChange? { $0.haloCurve = HaloCurve() } }
       divider()
@@ -182,13 +200,13 @@ final class Inspector: NSView {
   }
   private func button(_ title: String, _ action: @escaping () -> Void) {
     let button = actionButton(title, target: nil, action: nil)
-    bind(button) { _ in action() }
+    sectionActions.bind(button) { _ in action() }
     add(button)
   }
   private func toggle(_ title: String, _ path: WritableKeyPath<GlassParameters, Bool>) {
     let button = NSButton(checkboxWithTitle: title, target: nil, action: nil)
     button.font = DesignerFont.font(size: 11)
-    bind(button) { [weak self] sender in
+    sectionActions.bind(button) { [weak self] sender in
       let value = (sender as! NSButton).state == .on
       self?.onChange? { $0[keyPath: path] = value }
     }
@@ -205,7 +223,7 @@ final class Inspector: NSView {
     control.controlSize = .small
     control.font = DesignerFont.font(size: 10)
     control.segmentDistribution = .fillEqually
-    bind(control) { [weak self] sender in
+    sectionActions.bind(control) { [weak self] sender in
       let selected = (sender as! NSSegmentedControl).selectedSegment
       guard selected >= 0 else { return }
       self?.onChange? { $0[keyPath: path] = selected }
@@ -244,8 +262,8 @@ final class Inspector: NSView {
     field.widthAnchor.constraint(equalToConstant: 60).isActive = true
     title.widthAnchor.constraint(equalToConstant: 168).isActive = true
     slider.widthAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
-    bind(slider) { sender in changed((sender as! NSSlider).doubleValue) }
-    bind(field) { sender in
+    sectionActions.bind(slider) { sender in changed((sender as! NSSlider).doubleValue) }
+    sectionActions.bind(field) { sender in
       guard let number = (sender as! NSTextField).objectValue as? NSNumber,
         number.doubleValue.isFinite
       else { return }
@@ -299,10 +317,11 @@ final class Inspector: NSView {
     }
     slider.setAccessibilityLabel(spec.key)
     field.setAccessibilityLabel(spec.key + " value")
-    bind(check) { [weak self] sender in
+    sectionActions.bind(check) { [weak self] sender in
       guard let self else { return }
       let enabled = (sender as! NSButton).state == .on
-      let current = rim ? lastCanvas?.observedHighlights[spec.key] : lastCanvas?.observed[spec.key]
+      let current =
+        rim ? lastCanvas?.nativeHighlightInputs[spec.key] : lastCanvas?.nativeFilterInputs[spec.key]
       self.onChange? { p in
         if rim {
           p.highlightInputs[spec.key] = enabled ? current : nil
@@ -313,7 +332,7 @@ final class Inspector: NSView {
     }
     syncs.append { p, canvas in
       let override = rim ? p.highlightInputs[spec.key] : p.filterInputs[spec.key]
-      let live = rim ? canvas.observedHighlights[spec.key] : canvas.observed[spec.key]
+      let live = rim ? canvas.nativeHighlightInputs[spec.key] : canvas.nativeFilterInputs[spec.key]
       let number = override ?? live
       slider.isEnabled = live != nil
       field.isEnabled = live != nil

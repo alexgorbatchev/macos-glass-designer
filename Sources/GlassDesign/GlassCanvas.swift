@@ -4,8 +4,8 @@ import AppKit
 @MainActor
 public final class GlassCanvas: NSView {
   public private(set) var parameters = GlassParameters()
-  public private(set) var observed: [String: Double] = [:]
-  public private(set) var observedHighlights: [String: Double] = [:]
+  public private(set) var nativeFilterInputs: [String: Double] = [:]
+  public private(set) var nativeHighlightInputs: [String: Double] = [:]
   public private(set) var issues: [String] = []
   public var onReadout: (() -> Void)?
   public private(set) var secondaryVisible = false
@@ -23,11 +23,13 @@ public final class GlassCanvas: NSView {
   private let fills = NSView()
   private var maskKey: String?
   private var mask: CGImage?
+  var haloMaskImage: CGImage? { mask }
   private var syncScheduled = false
   private var paintScheduled = false
-  private var secondaryAnimating = false
+  private(set) var secondaryAnimating = false
   private var animationGeneration = 0
   private var configurationIssues: [String] = []
+  private let nativeReadouts = NativeReadouts()
   var mainSurfaceFrame: CGRect { mainGlass.frame }
   var visibleSurfaceBounds: CGRect {
     secondaryGlass.isHidden ? mainGlass.frame : mainGlass.frame.union(secondaryGlass.frame)
@@ -46,7 +48,7 @@ public final class GlassCanvas: NSView {
     halo.blendingMode = .withinWindow
     halo.state = .active
     halo.wantsLayer = true
-    for view in [haloDim, haloGlassHost, shadowView, fills, container, host] {
+    for view in [haloDim, haloGlassHost, shadowView, fills, host] {
       view.wantsLayer = true
     }
     addSubview(halo)
@@ -55,11 +57,9 @@ public final class GlassCanvas: NSView {
     addSubview(haloDim)
     addSubview(shadowView)
     addSubview(fills)
-    addSubview(container)
     fills.addSubview(plainMain)
     fills.addSubview(plainSecondary)
-    container.contentView = host
-    rebuildGlass()
+    installGlass()
   }
 
   required init?(coder: NSCoder) { nil }
@@ -92,9 +92,12 @@ public final class GlassCanvas: NSView {
       || old.useReducedShadowRadius != p.useReducedShadowRadius
       || !Set(old.filterInputs.keys).isSubset(of: Set(p.filterInputs.keys))
       || !Set(old.highlightInputs.keys).isSubset(of: Set(p.highlightInputs.keys))
-    if recipeChanged || secondaryAnimating { rebuildGlass() }
-    for glass in [mainGlass, secondaryGlass] {
-      PrivateGlass.apply(p, to: glass, issues: &configurationIssues)
+    if recipeChanged || secondaryAnimating {
+      rebuildGlass()
+    } else {
+      for glass in [mainGlass, secondaryGlass] {
+        PrivateGlass.apply(p, to: glass, issues: &configurationIssues)
+      }
     }
     appearance =
       p.appearance == 0 ? nil : NSAppearance(named: p.appearance == 1 ? .aqua : .darkAqua)
@@ -124,15 +127,22 @@ public final class GlassCanvas: NSView {
     // leaves overrides cached in that filter (native regression test on macOS 26.6.2).
     container.contentView = nil
     container.removeFromSuperview()
+    mainGlass.removeFromSuperview()
+    secondaryGlass.removeFromSuperview()
     container = NSGlassEffectContainerView()
+    mainGlass = NSGlassEffectView()
+    secondaryGlass = NSGlassEffectView()
+    installGlass()
+    nativeFilterInputs = [:]
+    nativeHighlightInputs = [:]
+  }
+
+  /// Hosts the current container and glass views above the fills, configured for the recipe.
+  private func installGlass() {
     container.wantsLayer = true
     container.spacing = parameters.mergeSpacing
     container.contentView = host
     addSubview(container)
-    mainGlass.removeFromSuperview()
-    secondaryGlass.removeFromSuperview()
-    mainGlass = NSGlassEffectView()
-    secondaryGlass = NSGlassEffectView()
     mainGlass.contentView = SampleContent(secondary: false)
     secondaryGlass.contentView = SampleContent(secondary: true)
     host.addSubview(mainGlass)
@@ -142,20 +152,93 @@ public final class GlassCanvas: NSView {
       NotificationCenter.default.addObserver(
         self, selector: #selector(surfaceFrameChanged(_:)),
         name: NSView.frameDidChangeNotification, object: glass)
-    }
-    for glass in [mainGlass, secondaryGlass] {
       PrivateGlass.apply(parameters, to: glass, issues: &configurationIssues)
     }
-    observed = [:]
-    observedHighlights = [:]
   }
 
-  var mainFrame: CGRect {
+  /// The main surface centred in the canvas, before the preview offset.
+  private var centredMainFrame: CGRect {
     let p = parameters
     return CGRect(
       x: ((bounds.width - p.width) / 2).rounded(),
       y: ((bounds.height - p.height) / 2).rounded(), width: p.width,
       height: p.height + (secondaryVisible && p.secondaryEffect == 4 ? 80 + p.panelGap : 0))
+  }
+
+  var mainFrame: CGRect {
+    let offset = clamped(surfaceOffset)
+    return centredMainFrame.offsetBy(dx: offset.dx, dy: offset.dy)
+  }
+
+  // MARK: - Moving the embedded glass
+
+  /// Whether dragging the glass moves it over the scene. The embedded stage sets this; the
+  /// detached preview leaves it off so a drag moves its window instead.
+  var movesSurfaces = false
+  /// Where the glass sits relative to the centre. Preview-only: not part of the recipe.
+  private var surfaceOffset = CGVector.zero
+  private var dragStart: (point: CGPoint, offset: CGVector)?
+
+  /// Keeps the glass, and the second surface above it, inside the canvas. A group larger than
+  /// the canvas stays centred on that axis.
+  private func clamped(_ offset: CGVector) -> CGVector {
+    let main = centredMainFrame
+    let group =
+      secondaryVisible && parameters.secondaryEffect != 4
+      ? main.union(
+        CGRect(
+          x: main.minX, y: main.maxY + parameters.panelGap, width: parameters.width, height: 80))
+      : main
+    func axis(_ value: CGFloat, _ low: CGFloat, _ high: CGFloat) -> CGFloat {
+      low > high ? 0 : min(high, max(low, value.rounded()))
+    }
+    return CGVector(
+      dx: axis(offset.dx, bounds.minX - group.minX, bounds.maxX - group.maxX),
+      dy: axis(offset.dy, bounds.minY - group.minY, bounds.maxY - group.maxY))
+  }
+
+  /// The embedded preview is a picture: its glass and sample text take no clicks of their own,
+  /// so a press anywhere on it reaches the canvas.
+  public override func hitTest(_ point: NSPoint) -> NSView? {
+    guard movesSurfaces else { return super.hitTest(point) }
+    return frame.contains(point) ? self : nil
+  }
+
+  public override func resetCursorRects() {
+    if movesSurfaces { addCursorRect(visibleSurfaceBounds, cursor: .openHand) }
+  }
+
+  public override func mouseDown(with event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    guard movesSurfaces, !secondaryAnimating, visibleSurfaceBounds.contains(point) else {
+      super.mouseDown(with: event)
+      return
+    }
+    dragStart = (point, surfaceOffset)
+    NSCursor.closedHand.push()
+  }
+
+  public override func mouseDragged(with event: NSEvent) {
+    guard let dragStart else {
+      super.mouseDragged(with: event)
+      return
+    }
+    let point = convert(event.locationInWindow, from: nil)
+    surfaceOffset = clamped(
+      CGVector(
+        dx: dragStart.offset.dx + point.x - dragStart.point.x,
+        dy: dragStart.offset.dy + point.y - dragStart.point.y))
+    needsLayout = true
+    layoutSubtreeIfNeeded()
+  }
+
+  public override func mouseUp(with event: NSEvent) {
+    guard dragStart != nil else {
+      super.mouseUp(with: event)
+      return
+    }
+    dragStart = nil
+    NSCursor.pop()
   }
 
   var secondaryFrame: CGRect {
@@ -178,6 +261,7 @@ public final class GlassCanvas: NSView {
       secondaryGlass.isHidden = !secondaryVisible || parameters.secondaryEffect == 4
     }
     for view in [shadowView, fills, halo, haloGlassHost, haloDim] { view.frame = bounds }
+    if movesSurfaces { window?.invalidateCursorRects(for: self) }
     layoutPaint()
     scheduleReadout()
   }
@@ -260,7 +344,7 @@ public final class GlassCanvas: NSView {
 
   private var fillColor: NSColor {
     NSColor(
-      calibratedHue: parameters.fillHue, saturation: parameters.fillSaturation,
+      hue: parameters.fillHue, saturation: parameters.fillSaturation,
       brightness: parameters.fillBrightness, alpha: parameters.fillAlpha)
   }
 
@@ -297,37 +381,36 @@ public final class GlassCanvas: NSView {
 
   public func refreshInternals() {
     var issues = configurationIssues
-    let backgrounds = parameters.glassEnabled ? PrivateGlass.backgrounds(container) : []
-    observed = [:]
-    observedHighlights = [:]
-    if let first = backgrounds.first {
-      for field in GlassCatalog.filters {
-        if let number = PrivateGlass.read(first, "filters.glassBackground.\(field.key)")
-          as? NSNumber
-        {
-          observed[field.key] = number.doubleValue
-        }
-      }
-    } else if parameters.glassEnabled {
+    let backgrounds =
+      parameters.glassEnabled ? PrivateGlass.backgrounds(container, issues: &issues) : []
+    nativeFilterInputs = [:]
+    nativeHighlightInputs = [:]
+    if backgrounds.isEmpty && parameters.glassEnabled {
       issues.append("AppKit has not exposed a glassBackground layer for this recipe")
     }
-    for background in backgrounds {
+    for (index, background) in backgrounds.enumerated() {
+      let natives = nativeReadouts.natives(of: background, keys: GlassCatalog.filters.map(\.key)) {
+        key in
+        (PrivateGlass.read(background, "filters.glassBackground.\(key)", issues: &issues)
+          as? NSNumber)?.doubleValue
+      }
+      if index == 0 { nativeFilterInputs = natives }
       for (key, value) in parameters.filterInputs {
         PrivateGlass.write(background, "filters.glassBackground.\(key)", value, issues: &issues)
       }
+      nativeReadouts.recordWrites(parameters.filterInputs, to: background)
     }
-    let highlights = parameters.glassEnabled ? PrivateGlass.highlights(container) : []
-    if let first = highlights.first?.1 {
-      for field in GlassCatalog.highlights {
-        if let number = PrivateGlass.read(first, field.key) as? NSNumber {
-          observedHighlights[field.key] = number.doubleValue
-        }
+    let highlights =
+      parameters.glassEnabled ? PrivateGlass.highlights(container, issues: &issues) : []
+    for (index, (layer, effect)) in highlights.enumerated() {
+      let natives = nativeReadouts.natives(of: effect, keys: GlassCatalog.highlights.map(\.key)) {
+        key in (PrivateGlass.read(effect, key, issues: &issues) as? NSNumber)?.doubleValue
       }
-    }
-    for (layer, effect) in highlights {
+      if index == 0 { nativeHighlightInputs = natives }
       for (key, value) in parameters.highlightInputs {
         PrivateGlass.write(effect, key, value, issues: &issues)
       }
+      nativeReadouts.recordWrites(parameters.highlightInputs, to: effect)
       if !parameters.highlightInputs.isEmpty {
         PrivateGlass.write(layer, "effect", effect, issues: &issues)
       }
@@ -404,9 +487,10 @@ public final class GlassCanvas: NSView {
         p.secondaryEasing == 1 && appearing
         ? CAMediaTimingFunction(controlPoints: 0.34, 1.36, 0.64, 1)
         : CAMediaTimingFunction(controlPoints: 0.42, 0, 0.58, 1)
-      if p.secondaryEffect == 4 {
+      if p.secondaryEffect == 4 || targetMain != restingMain {
         main.animator().frame = targetMain
-      } else {
+      }
+      if p.secondaryEffect != 4 {
         secondary.animator().frame = appearing ? targetSecondary : start
       }
     } completionHandler: { [weak self] in

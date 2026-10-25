@@ -36,9 +36,4 @@ extension GlassParameters {
       }
     }
   }
-
-  /// Interpolate the editable sequence of cubic segments, holding the endpoint strengths outside.
-  public func haloStrength(at x: Double) -> Double {
-    haloCurve.value(at: x)
-  }
 }

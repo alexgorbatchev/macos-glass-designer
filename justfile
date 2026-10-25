@@ -32,10 +32,6 @@ bundle:
 run: bundle
     open "dist/macOS Glass Designer.app"
 
-# The same native GUI; this application has no text-mode CLI.
-run-ai: bundle
-    AGENT=1 open "dist/macOS Glass Designer.app"
-
 # Capture each inspector in a self-exiting test window (Screen Recording permission required).
 capture:
     GLASS_CAPTURE=1 swift test -Xswiftc -warnings-as-errors -Xcc -Werror --filter NativeTests/testNativeRenderingAndLayoutAcrossInspectors
