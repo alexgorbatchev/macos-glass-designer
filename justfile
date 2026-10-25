@@ -36,4 +36,10 @@ run: bundle
 capture:
     GLASS_CAPTURE=1 swift test -Xswiftc -warnings-as-errors -Xcc -Werror --filter NativeTests/testNativeRenderingAndLayoutAcrossInspectors
 
+# Capture the README screenshot into docs/images (Screen Recording permission required).
+screenshot:
+    mkdir -p docs/images
+    GLASS_SCREENSHOT="$PWD/docs/images/designer.png" swift test -Xswiftc -warnings-as-errors -Xcc -Werror --filter ScreenshotTests
+    sips -Z 1600 docs/images/designer.png > /dev/null
+
 check: test bundle

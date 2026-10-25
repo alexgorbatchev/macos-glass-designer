@@ -1,5 +1,7 @@
 `macOS Glass Designer` lets you tune native macOS glass and hand an agent the exact parameters. Browse materials with the keyboard, adjust the surface and its surroundings, and copy a standalone Swift parameter specification for use from Swift, Rust, Qt, or another macOS bridge.
 
+![macOS Glass Designer with a glass panel and its progressive blur halo over a dark desktop scene, the variant lists on the left, and the blur curve editor on the right](docs/images/designer.png)
+
 # What It Does
 
 - **Browse instantly.** Arrow through 21 variants and 33 subvariants without pressing Enter. Type a name to jump through a list.
