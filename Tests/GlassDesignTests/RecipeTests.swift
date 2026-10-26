@@ -74,7 +74,15 @@ final class RecipeTests: XCTestCase {
     var p = GlassParameters()
     p.width = .nan
     XCTAssertThrowsError(try p.validate())
+    p.width = 420.5
+    XCTAssertThrowsError(try p.validate()) {
+      XCTAssertEqual($0.localizedDescription, "width must be a whole number of points")
+    }
     p.width = 420
+    p.height = 200.25
+    XCTAssertThrowsError(try p.validate())
+    p.height = 200
+    XCTAssertNoThrow(try p.validate())
     p.haloCurve.nodes[0].position.x = 0.9
     p.haloCurve.nodes[1].position.x = 0.2
     XCTAssertThrowsError(try p.validate())

@@ -243,7 +243,8 @@ final class Inspector: NSView, NSTextFieldDelegate {
   /// A label line with the value at its right end, and the slider across the full width below.
   /// The value is a borderless text field: it reads as text, and a click edits it exactly.
   private func numericControl(
-    title: NSView, range: ClosedRange<Double>, changed: @escaping (Double) -> Void
+    title: NSView, range: ClosedRange<Double>, fractionDigits: Int = 2,
+    changed: @escaping (Double) -> Void
   )
     -> (header: NSStackView, slider: NSSlider, field: NSTextField)
   {
@@ -264,7 +265,7 @@ final class Inspector: NSView, NSTextFieldDelegate {
     formatter.numberStyle = .decimal
     formatter.usesGroupingSeparator = false
     formatter.minimumFractionDigits = 0
-    formatter.maximumFractionDigits = 2
+    formatter.maximumFractionDigits = fractionDigits
     formatter.minimum = NSNumber(value: range.lowerBound)
     formatter.maximum = NSNumber(value: range.upperBound)
     field.formatter = formatter
@@ -303,9 +304,10 @@ final class Inspector: NSView, NSTextFieldDelegate {
   }
   private func number(_ spec: NumericField, requiresSecondary: Bool = false) {
     let title = label(spec.title, size: 11, weight: .medium)
-    let (header, slider, field) = numericControl(title: title, range: spec.range) {
-      [weak self] value in
-      self?.onChange? { $0[keyPath: spec.path] = value }
+    let (header, slider, field) = numericControl(
+      title: title, range: spec.range, fractionDigits: spec.wholePoints ? 0 : 2
+    ) { [weak self] value in
+      self?.onChange? { $0[keyPath: spec.path] = spec.wholePoints ? value.rounded() : value }
     }
     slider.setAccessibilityLabel(spec.title)
     field.setAccessibilityLabel(spec.title + " value")

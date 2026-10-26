@@ -7,16 +7,20 @@ public struct NumericField: Sendable {
   public let range: ClosedRange<Double>
   public let unit: String
   public let help: String
+  /// Surface sizes are whole points: the surface is centred on a device pixel, so a fractional
+  /// size would put its edges, and the content laid out inside it, between pixels.
+  public let wholePoints: Bool
 
   init(
     _ title: String, _ key: String, _ path: any WritableKeyPath<GlassParameters, Double> & Sendable,
-    _ range: ClosedRange<Double>, _ unit: String = "", help: String
+    _ range: ClosedRange<Double>, _ unit: String = "", wholePoints: Bool = false, help: String
   ) {
     self.title = title
     self.key = key
     self.path = path
     self.range = range
     self.unit = unit
+    self.wholePoints = wholePoints
     self.help = help
   }
 }
@@ -56,9 +60,10 @@ public enum GlassCatalog {
       "Corner radius", "cornerRadius", \.cornerRadius, 0...100, "pt",
       help: "Curvature of the glass corners, in points."),
     .init(
-      "Width", "width", \.width, 180...800, "pt", help: "Width of each glass surface, in points."),
+      "Width", "width", \.width, 180...800, "pt", wholePoints: true,
+      help: "Width of each glass surface, in points."),
     .init(
-      "Height", "height", \.height, 100...500, "pt",
+      "Height", "height", \.height, 100...500, "pt", wholePoints: true,
       help: "Resting height of the main surface, in points."),
     .init(
       "Merge distance", "mergeSpacing", \.mergeSpacing, 0...80, "pt",

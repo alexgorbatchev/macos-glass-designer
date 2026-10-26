@@ -23,6 +23,9 @@ extension GlassParameters {
       let value = self[keyPath: field.path]
       try require(
         value.isFinite && field.range.contains(value), "\(field.key) must be in \(field.range)")
+      try require(
+        !field.wholePoints || value == value.rounded(),
+        "\(field.key) must be a whole number of points")
     }
     try haloCurve.validate()
     for (values, fields) in [

@@ -8,7 +8,7 @@
 - **Tune the whole effect.** Adjust tint, fill, dimensions, merging, appearance states, progressive blur or masked-glass halos, a Bézier strength curve with corner, smooth, and symmetric points, system and custom shadows, 19 background filter inputs, and 5 rim inputs.
 - **See the context.** Place the glass over a desktop with app windows, a web article, a code editor, or a photo library, each in a light or dark theme on any installed wallpaper, or detach a transparent preview over your real windows.
 - **Preview motion.** Try pop, Emerge, Unfold, Slide, and Expand effects, with Reduce Motion respected.
-- **Keep exact recipes.** Copy Swift with units and API mapping, copy JSON, or save and reopen JSON recipes. Fractional values survive export.
+- **Keep exact recipes.** Copy Swift with units and API mapping, copy JSON, or save and reopen JSON recipes. Values export at full precision; surface width and height are whole points.
 
 # How It Works
 
@@ -49,7 +49,7 @@ Open the app, press **⌘L**, and hold **↓** to compare materials. Press **⇧
 | Rim · ⌘5 | Key/fill strength and spread, curvature |
 | Motion · ⌘6 | Pop duration/shrink/opacity, secondary effect/easing/duration |
 
-Distances use points, durations seconds, and sRGB HSBA colors and opacity values use 0–1. Native window shadows are visible in the detached preview. The custom shadow and system shadow can be enabled independently.
+Distances use points, durations seconds, and sRGB HSBA colors and opacity values use 0–1. Surface width and height are whole points, so the preview keeps its edges and text on device pixels while they change. Native window shadows are visible in the detached preview. The custom shadow and system shadow can be enabled independently.
 
 In Blur, drag a point or its handles to shape the curve. X runs from the outer halo edge to the panel; Y controls blur and dimming strength.
 

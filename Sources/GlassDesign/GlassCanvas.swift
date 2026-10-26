@@ -156,12 +156,16 @@ public final class GlassCanvas: NSView {
     }
   }
 
-  /// The main surface centred in the canvas, before the preview offset.
+  /// The main surface centred in the canvas, before the preview offset. The centre sits on a
+  /// device pixel and the origin is not rounded: rounding the origin of a centred rectangle moves
+  /// its centre by up to half a point as its size changes, which makes centred content jiggle
+  /// while a size slider moves.
   private var centredMainFrame: CGRect {
     let p = parameters
+    let backing = convertToBacking(CGPoint(x: bounds.midX, y: bounds.midY))
+    let centre = convertFromBacking(CGPoint(x: backing.x.rounded(), y: backing.y.rounded()))
     return CGRect(
-      x: ((bounds.width - p.width) / 2).rounded(),
-      y: ((bounds.height - p.height) / 2).rounded(), width: p.width,
+      x: centre.x - p.width / 2, y: centre.y - p.height / 2, width: p.width,
       height: p.height + (secondaryVisible && p.secondaryEffect == 4 ? 80 + p.panelGap : 0))
   }
 

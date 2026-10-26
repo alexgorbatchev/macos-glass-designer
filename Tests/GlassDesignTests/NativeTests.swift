@@ -179,6 +179,48 @@ final class NativeTests: XCTestCase {
     XCTAssertEqual(inspector.convert(inspector.bounds, to: root).minY, 14, accuracy: 1)
   }
 
+  /// The surface grows evenly around a fixed centre, so its centred text must not move while a
+  /// size slider is dragged slowly. Sizes are whole points: a fractional size would put the
+  /// surface's edges, and the text laid out inside it, between device pixels.
+  @MainActor func testPreviewTextStaysStillWhileTheSurfaceResizes() throws {
+    _ = NSApplication.shared
+    let controller = DesignerController()
+    defer { controller.window.orderOut(nil) }
+    controller.window.orderFront(nil)
+    let root = try XCTUnwrap(controller.window.contentView)
+    root.layoutSubtreeIfNeeded()
+    let canvas = controller.canvas
+    let views = descendants(of: root)
+    let sliders = try ["Width", "Height"].map { name in
+      try XCTUnwrap(views.compactMap { $0 as? NSSlider }.first { $0.accessibilityLabel() == name })
+    }
+    func title() throws -> CGRect {
+      let glass = try XCTUnwrap(canvas.container.contentView?.subviews.first as? NSGlassEffectView)
+      let title = try XCTUnwrap(
+        descendants(of: try XCTUnwrap(glass.contentView)).compactMap { $0 as? NSTextField }.first)
+      return title.convert(title.bounds, to: canvas)
+    }
+    let start = try title()
+    for size in stride(from: 300.0, through: 306.0, by: 0.25) {
+      for (slider, value) in zip(sliders, [size + 100, size - 100]) {
+        slider.doubleValue = value
+        XCTAssertTrue(slider.sendAction(slider.action, to: slider.target))
+      }
+      XCTAssertEqual(controller.parameters.width, (size + 100).rounded())
+      XCTAssertEqual(controller.parameters.height, (size - 100).rounded())
+      canvas.layoutSubtreeIfNeeded()
+      let moved = try title()
+      XCTAssertEqual(moved.midY, start.midY, accuracy: 0.01, "height \(size - 100)")
+      XCTAssertEqual(moved.midX, start.midX, accuracy: 0.01, "width \(size + 100)")
+    }
+    let field = try XCTUnwrap(
+      views.compactMap { $0 as? NSTextField }.first { $0.accessibilityLabel() == "Height value" })
+    field.stringValue = "250.4"
+    XCTAssertTrue(field.sendAction(field.action, to: field.target))
+    XCTAssertEqual(controller.parameters.height, 250, "Typed sizes round to whole points")
+    XCTAssertEqual(field.stringValue, "250")
+  }
+
   @MainActor func testPreviewTextIsCenteredAndSecondSurfaceControlsFollowVisibility() async throws {
     _ = NSApplication.shared
     let controller = DesignerController()
