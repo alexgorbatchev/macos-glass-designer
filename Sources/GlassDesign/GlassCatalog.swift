@@ -7,8 +7,8 @@ public struct NumericField: Sendable {
   public let range: ClosedRange<Double>
   public let unit: String
   public let help: String
-  /// Surface sizes are whole points: the surface is centred on a device pixel, so a fractional
-  /// size would put its edges, and the content laid out inside it, between pixels.
+  /// Surface geometry is whole points: the surface is centred on a device pixel, so a fractional
+  /// size or gap would put surface edges, and the content laid out inside them, between pixels.
   public let wholePoints: Bool
 
   init(
@@ -69,7 +69,7 @@ public enum GlassCatalog {
       "Merge distance", "mergeSpacing", \.mergeSpacing, 0...80, "pt",
       help: "Distance at which neighboring surfaces merge, in points."),
     .init(
-      "Panel gap", "panelGap", \.panelGap, 0...80, "pt",
+      "Panel gap", "panelGap", \.panelGap, 0...80, "pt", wholePoints: true,
       help: "Space between the main and second surfaces, in points."),
     .init(
       "Backing dim", "dim", \.dim, 0...1,

@@ -82,6 +82,9 @@ final class RecipeTests: XCTestCase {
     p.height = 200.25
     XCTAssertThrowsError(try p.validate())
     p.height = 200
+    p.panelGap = 10.5
+    XCTAssertThrowsError(try p.validate())
+    p.panelGap = 10
     XCTAssertNoThrow(try p.validate())
     p.haloCurve.nodes[0].position.x = 0.9
     p.haloCurve.nodes[1].position.x = 0.2

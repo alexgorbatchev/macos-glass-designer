@@ -221,6 +221,47 @@ final class NativeTests: XCTestCase {
     XCTAssertEqual(field.stringValue, "250")
   }
 
+  /// The panel gap places the second surface, so it is whole points too: the second surface's
+  /// text moves exactly with the gap instead of wobbling between device pixels.
+  @MainActor func testSecondSurfaceTextFollowsThePanelGapInWholePoints() async throws {
+    _ = NSApplication.shared
+    let controller = DesignerController()
+    defer { controller.window.orderOut(nil) }
+    controller.window.orderFront(nil)
+    controller.change {
+      $0.secondaryEffect = 3
+      $0.secondarySeconds = 0.05
+      $0.haloEnabled = false
+    }
+    let root = try XCTUnwrap(controller.window.contentView)
+    root.layoutSubtreeIfNeeded()
+    let canvas = controller.canvas
+    controller.toggleSecondary()
+    try await waitUntil("the second surface to settle") {
+      canvas.secondaryVisible && !canvas.secondaryAnimating
+    }
+    let slider = try XCTUnwrap(
+      descendants(of: root).compactMap { $0 as? NSSlider }.first {
+        $0.accessibilityLabel() == "Panel gap"
+      })
+    func title() throws -> CGRect {
+      let glass = try XCTUnwrap(canvas.container.contentView?.subviews.last as? NSGlassEffectView)
+      let title = try XCTUnwrap(
+        descendants(of: try XCTUnwrap(glass.contentView)).compactMap { $0 as? NSTextField }.first)
+      return title.convert(title.bounds, to: canvas)
+    }
+    let startGap = controller.parameters.panelGap
+    let start = try title()
+    for gap in stride(from: 10.0, through: 14.0, by: 0.25) {
+      slider.doubleValue = gap
+      XCTAssertTrue(slider.sendAction(slider.action, to: slider.target))
+      XCTAssertEqual(controller.parameters.panelGap, gap.rounded())
+      canvas.layoutSubtreeIfNeeded()
+      XCTAssertEqual(
+        try title().midY, start.midY + gap.rounded() - startGap, accuracy: 0.01, "gap \(gap)")
+    }
+  }
+
   @MainActor func testPreviewTextIsCenteredAndSecondSurfaceControlsFollowVisibility() async throws {
     _ = NSApplication.shared
     let controller = DesignerController()
