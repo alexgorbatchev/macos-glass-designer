@@ -125,6 +125,54 @@ final class BackdropTests: XCTestCase {
     XCTAssertEqual(found, 10, "Desktop has two windows; every other scene has one, in both themes")
   }
 
+  /// Window pixels match over two wallpapers; the wallpaper shows wherever a window is not.
+  /// A rounded corner exposes the wallpaper at its outermost pixel, top and bottom alike.
+  @MainActor func testDesktopWindowsAreRoundedAtAllFourCorners() async throws {
+    var renders: [Pixels] = []
+    var scale = 1.0
+    for name in ["iMac Blue", "iMac Orange"] {
+      let backdrop = BackdropView(frame: CGRect(x: 0, y: 0, width: 870, height: 860))
+      backdrop.scene = .desktop
+      backdrop.wallpaper = try wallpaper(name)
+      try await waitUntil("\(name)") { backdrop.pendingImages == 0 }
+      let bitmap = try XCTUnwrap(backdrop.bitmapImageRepForCachingDisplay(in: backdrop.bounds))
+      backdrop.cacheDisplay(in: backdrop.bounds, to: bitmap)
+      renders.append(try Pixels(bitmap))
+      scale = Double(bitmap.pixelsWide) / backdrop.bounds.width
+    }
+    let (blue, orange) = (renders[0], renders[1])
+    func showsWallpaper(_ x: Int, _ y: Int) -> Bool {
+      let (a, b) = (blue.rgb(x, y), orange.rgb(x, y))
+      return abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2) > 24
+    }
+    let buttons = blue.closeButtons(scale: scale)
+    XCTAssertEqual(buttons.count, 2, "Finder and Notes")
+    var bottomCorners = 0
+    for button in buttons {
+      // The close button sits 12 pt from the window's left edge, centred in the 40 pt bar.
+      let left = Int((button.minX - 12 * scale).rounded())
+      let top = Int((button.midY - 20 * scale).rounded())
+      let inset = Int(30 * scale)
+      var bottom = top + inset
+      while bottom + 1 < blue.height && !showsWallpaper(left + inset, bottom + 1) { bottom += 1 }
+      var right = left + inset
+      while right + 1 < blue.width && !showsWallpaper(right + 1, top + inset) { right += 1 }
+      let label = "window at \(button)"
+      XCTAssertFalse(showsWallpaper(left + inset, top + inset), "\(label) is opaque inside")
+      for (name, x, y, outward) in [
+        ("top-left", left, top, (-1, -1)), ("top-right", right, top, (1, -1)),
+        ("bottom-left", left, bottom, (-1, 1)), ("bottom-right", right, bottom, (1, 1)),
+      ] {
+        // A corner lying over another window has no wallpaper around it to reveal.
+        guard showsWallpaper(x + 3 * outward.0, y + 3 * outward.1) else { continue }
+        XCTAssertTrue(
+          showsWallpaper(x - outward.0, y - outward.1), "\(label) \(name) corner is round")
+        if name.hasPrefix("bottom") { bottomCorners += 1 }
+      }
+    }
+    XCTAssertGreaterThanOrEqual(bottomCorners, 3, "Bottom corners over the wallpaper were checked")
+  }
+
   /// Photos decode in the background, so a scene first draws before any are loaded.
   @MainActor func testScenesDrawBeforeTheirImagesLoad() throws {
     for scene in [BackdropScene.photos, .desktop, .article] {

@@ -25,12 +25,11 @@ struct SceneRenderer {
     drawMenuBar()
     let finder = CGRect(
       x: bounds.width * 0.05, y: 58, width: bounds.width * 0.6, height: bounds.height * 0.5)
-    let finderContent = window(finder, title: "Documents")
-    drawFinder(in: finderContent)
+    window(finder, title: "Documents", content: drawFinder)
     let notes = CGRect(
       x: bounds.width * 0.4, y: bounds.height * 0.34, width: bounds.width * 0.55,
       height: bounds.height * 0.44)
-    drawNotes(in: window(notes, title: "Glass Notes"))
+    window(notes, title: "Glass Notes", content: drawNotes)
     drawDock()
   }
 
@@ -182,7 +181,10 @@ struct SceneRenderer {
   // MARK: - Article
 
   private func drawArticle() {
-    let content = window(bounds, title: "", framed: false)
+    window(bounds, title: "", framed: false, content: drawArticlePage)
+  }
+
+  private func drawArticlePage(in content: CGRect) {
     // Address field in the unified toolbar.
     let field = toolbarItem(x: bounds.midX - 170, width: 340, height: 26)
     NSColor.quaternaryLabelColor.setFill()
@@ -254,7 +256,10 @@ struct SceneRenderer {
   // MARK: - Code
 
   private func drawCode() {
-    let content = window(bounds, title: "GlassCanvas.swift", titleX: 160, framed: false)
+    window(bounds, title: "GlassCanvas.swift", titleX: 160, framed: false, content: drawEditor)
+  }
+
+  private func drawEditor(in content: CGRect) {
     for (index, name) in ["play.fill", "stop.fill"].enumerated() {
       symbol(
         name, in: toolbarItem(x: 94 + CGFloat(index) * 30, width: 16, height: 14),
@@ -355,7 +360,10 @@ struct SceneRenderer {
   // MARK: - Photos
 
   private func drawPhotos() {
-    let content = window(bounds, title: "Library", framed: false)
+    window(bounds, title: "Library", framed: false, content: drawLibrary)
+  }
+
+  private func drawLibrary(in content: CGRect) {
     let segments = ["Years", "Months", "Days", "All Photos"]
     var x = bounds.midX - 150
     let pill = toolbarItem(x: x - 3, width: 306, height: 26)
@@ -461,11 +469,13 @@ struct SceneRenderer {
     CGRect(x: x, y: top + (Self.titleBarHeight - height) / 2, width: width, height: height)
   }
 
-  /// Draws a window with a unified compact title bar and returns its content area. `framed`
-  /// windows float with rounded corners and a shadow; unframed ones fill the stage.
+  /// Draws a window with a unified compact title bar, then its content via `content`, clipped
+  /// to the window's shape so nothing escapes its rounded corners. `framed` windows float with
+  /// rounded corners and a shadow; unframed ones fill the stage.
   private func window(
-    _ frame: CGRect, title: String, titleX: CGFloat = SceneRenderer.titleX, framed: Bool = true
-  ) -> CGRect {
+    _ frame: CGRect, title: String, titleX: CGFloat = SceneRenderer.titleX, framed: Bool = true,
+    content: (CGRect) -> Void
+  ) {
     let titleHeight = Self.titleBarHeight
     let chromeless = !framed
     let shape = NSBezierPath(
@@ -500,14 +510,15 @@ struct SceneRenderer {
         font: font, color: .labelColor)
     }
     separator(y: frame.minY + titleHeight, from: frame.minX, to: frame.maxX)
+    content(
+      CGRect(
+        x: frame.minX, y: frame.minY + titleHeight + 1, width: frame.width,
+        height: frame.height - titleHeight - 1))
     NSGraphicsContext.restoreGraphicsState()
     if !chromeless {
       NSColor.separatorColor.setStroke()
       shape.stroke()
     }
-    return CGRect(
-      x: frame.minX, y: frame.minY + titleHeight + 1, width: frame.width,
-      height: frame.height - titleHeight - 1)
   }
 
   private func sidebarBackground(_ rect: CGRect) {
