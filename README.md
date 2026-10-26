@@ -32,7 +32,7 @@
 
 # Installation
 
-1. Download the `macos-glass-designer-<version>-macos-arm64-notarized.zip` app archive from the [latest GitHub release](https://github.com/alexgorbatchev/macos-glass-designer/releases/latest). The prebuilt app requires an Apple Silicon Mac with macOS 26 or later.
+1. Download the `macos-glass-designer-<version>-macos-arm64.zip` app archive from the [latest GitHub release](https://github.com/alexgorbatchev/macos-glass-designer/releases/latest). The prebuilt app requires an Apple Silicon Mac with macOS 26 or later.
 2. Double-click the ZIP in Finder to extract `macOS Glass Designer.app`.
 3. Drag the app to `/Applications`, then open it.
 
