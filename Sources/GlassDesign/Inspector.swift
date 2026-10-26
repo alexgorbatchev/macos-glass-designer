@@ -1,7 +1,7 @@
 import AppKit
 
 @MainActor
-final class Inspector: NSView {
+final class Inspector: NSView, NSTextFieldDelegate {
   private let tabs = NSSegmentedControl(
     labels: ["Surface", "Blur", "Shadow", "Filter", "Rim", "Motion"],
     trackingMode: .selectOne, target: nil, action: nil)
@@ -240,10 +240,12 @@ final class Inspector: NSView {
     add(row)
   }
 
+  /// A label line with the value at its right end, and the slider across the full width below.
+  /// The value is a borderless text field: it reads as text, and a click edits it exactly.
   private func numericControl(
     title: NSView, range: ClosedRange<Double>, changed: @escaping (Double) -> Void
   )
-    -> (NSView, NSSlider, NSTextField)
+    -> (header: NSStackView, slider: NSSlider, field: NSTextField)
   {
     let slider = NSSlider(
       value: range.lowerBound, minValue: range.lowerBound, maxValue: range.upperBound, target: nil,
@@ -251,6 +253,13 @@ final class Inspector: NSView {
     slider.isContinuous = true
     let field = NSTextField()
     field.font = DesignerFont.font(size: 11)
+    field.isBordered = false
+    field.drawsBackground = false
+    field.alignment = .right
+    field.textColor = .secondaryLabelColor
+    // Return, Tab, and clicking away commit; Escape cancels (see doCommandBy).
+    field.cell?.sendsActionOnEndEditing = true
+    field.delegate = self
     let formatter = NumberFormatter()
     formatter.numberStyle = .decimal
     formatter.usesGroupingSeparator = false
@@ -259,24 +268,42 @@ final class Inspector: NSView {
     formatter.minimum = NSNumber(value: range.lowerBound)
     formatter.maximum = NSNumber(value: range.upperBound)
     field.formatter = formatter
+    // Wide enough for the longest value a field shows, such as -399.63.
     field.widthAnchor.constraint(equalToConstant: 60).isActive = true
-    title.widthAnchor.constraint(equalToConstant: 168).isActive = true
-    slider.widthAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
-    sectionActions.bind(slider) { sender in changed((sender as! NSSlider).doubleValue) }
+    sectionActions.bind(slider) { sender in
+      // The slider replaces whatever was being typed, so the value can follow it.
+      if field.currentEditor() != nil { field.abortEditing() }
+      changed((sender as! NSSlider).doubleValue)
+    }
     sectionActions.bind(field) { sender in
       guard let number = (sender as! NSTextField).objectValue as? NSNumber,
         number.doubleValue.isFinite
       else { return }
       changed(number.doubleValue)
     }
-    let row = NSStackView(views: [title, slider, field])
-    row.alignment = .centerY
-    row.spacing = 8
-    return (row, slider, field)
+    let header = NSStackView(views: [title, NSView(), field])
+    header.alignment = .centerY
+    header.spacing = 8
+    return (header, slider, field)
+  }
+
+  /// Escape cancels a value edit and shows the recipe's value again.
+  func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+    guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+    control.abortEditing()
+    if let lastCanvas { sync(current, canvas: lastCanvas) }
+    return true
+  }
+
+  /// Stacks rows edge to edge, each spanning the group's width.
+  private func group(_ views: [NSView], spacing: CGFloat) -> NSStackView {
+    let stack = vertical(views, spacing: spacing)
+    for view in views { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+    return stack
   }
   private func number(_ spec: NumericField, requiresSecondary: Bool = false) {
     let title = label(spec.title, size: 11, weight: .medium)
-    let (row, slider, field) = numericControl(title: title, range: spec.range) {
+    let (header, slider, field) = numericControl(title: title, range: spec.range) {
       [weak self] value in
       self?.onChange? { $0[keyPath: spec.path] = value }
     }
@@ -294,10 +321,7 @@ final class Inspector: NSView {
     }
     description.lineBreakMode = .byWordWrapping
     description.maximumNumberOfLines = 0
-    let stack = vertical([row, description], spacing: 3)
-    row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    description.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    add(stack)
+    add(group([header, slider, description], spacing: 3))
   }
   private func privateInput(_ spec: FilterField, rim: Bool) {
     let check = NSButton(checkboxWithTitle: spec.key, target: nil, action: nil)
@@ -309,7 +333,7 @@ final class Inspector: NSView {
     check.cell?.wraps = true
     check.toolTip = spec.help
     let readout = label("Native", size: 10, secondary: true)
-    let (row, slider, field) = numericControl(title: check, range: spec.range) {
+    let (header, slider, field) = numericControl(title: check, range: spec.range) {
       [weak self] value in
       self?.onChange? { p in
         if rim { p.highlightInputs[spec.key] = value } else { p.filterInputs[spec.key] = value }
@@ -356,13 +380,10 @@ final class Inspector: NSView {
     let textInset = checkboxTextInset - hintTextInset
     let hint = vertical([readout], spacing: 0)
     hint.edgeInsets.left = textInset
-    let stack = vertical([row, hint], spacing: 3)
-    row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    hint.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     readout.lineBreakMode = .byWordWrapping
     readout.maximumNumberOfLines = 0
+    add(group([header, slider, hint], spacing: 3))
     readout.widthAnchor.constraint(equalTo: hint.widthAnchor, constant: -textInset).isActive = true
-    add(stack)
   }
 }
 

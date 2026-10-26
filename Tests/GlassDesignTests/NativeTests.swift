@@ -254,6 +254,11 @@ final class NativeTests: XCTestCase {
     let rowRect = row.convert(row.bounds, to: root)
     XCTAssertEqual(titleRect.midY, rowRect.midY, accuracy: 1)
     XCTAssertEqual(controller.parameters.cornerRadius, 23.718281828)
+    // Typing a value sets the recipe exactly; the display rounds only what it shows.
+    value.stringValue = "19.375"
+    XCTAssertTrue(value.sendAction(value.action, to: value.target))
+    XCTAssertEqual(controller.parameters.cornerRadius, 19.375)
+    controller.change { $0.cornerRadius = 23.718281828 }
     let swift = try SwiftExport.source(for: controller.parameters, nativeFilterInputs: [:])
     XCTAssertTrue(swift.contains("23.718281828"))
     XCTAssertTrue(swift.contains("var secondaryEffect:"))
@@ -261,13 +266,23 @@ final class NativeTests: XCTestCase {
     for index in 0..<6 {
       controller.selectInspector(index)
       root.layoutSubtreeIfNeeded()
-      // Row titles (labels or override checkboxes) form one aligned column in every inspector.
-      let titles = descendants(of: root).compactMap { $0 as? NSStackView }
-        .filter { $0.arrangedSubviews.contains { $0 is NSSlider } }
-        .compactMap { $0.arrangedSubviews.first }
-      let columns = titles.map { $0.convert($0.alignmentRect(forFrame: $0.bounds), to: root) }
-      XCTAssertEqual(Set(columns.map { ($0.minX * 2).rounded() }).count, min(1, titles.count))
-      XCTAssertEqual(Set(columns.map { ($0.width * 2).rounded() }).count, min(1, titles.count))
+      // Each slider spans its row beneath the label; the value sits at the label line's right end.
+      func box(_ view: NSView) -> CGRect {
+        view.convert(view.alignmentRect(forFrame: view.bounds), to: root)
+      }
+      let views = descendants(of: root)
+      for slider in views.compactMap({ $0 as? NSSlider }) {
+        let name = try XCTUnwrap(slider.accessibilityLabel())
+        let field = try XCTUnwrap(
+          views.compactMap { $0 as? NSTextField }.first { $0.accessibilityLabel() == name + " value" },
+          name)
+        let title = try XCTUnwrap((field.superview as? NSStackView)?.arrangedSubviews.first, name)
+        XCTAssertEqual(box(slider).minX, box(title).minX, accuracy: 1, "\(name) starts at its label")
+        XCTAssertEqual(box(slider).maxX, box(field).maxX, accuracy: 1, "\(name) ends at its value")
+        XCTAssertGreaterThan(box(slider).width, 300, "\(name) takes the row width")
+        XCTAssertLessThan(box(slider).midY, box(title).minY, "\(name) sits below its label")
+        XCTAssertEqual(box(field).midY, box(title).midY, accuracy: 1, "\(name) value is on the label line")
+      }
       for view in descendants(of: root) {
         guard view is NSTextField || view is NSButton || view is NSSegmentedControl,
           let control = view as? NSControl
@@ -285,7 +300,7 @@ final class NativeTests: XCTestCase {
         }
         if (index == 3 || index == 4), let check = control as? NSButton,
           let row = check.superview as? NSStackView,
-          row.arrangedSubviews.contains(where: { $0 is NSSlider })
+          row.arrangedSubviews.contains(where: { ($0 as? NSTextField)?.isEditable == true })
         {
           XCTAssertEqual(check.title.first?.isUppercase, true, check.title)
           let group = try XCTUnwrap(row.superview)
@@ -302,7 +317,9 @@ final class NativeTests: XCTestCase {
         }
         if let title = view as? NSTextField, !title.isEditable,
           let row = title.superview as? NSStackView,
-          row.arrangedSubviews.contains(where: { $0 is NSSlider || $0 is NSSegmentedControl })
+          row.arrangedSubviews.contains(where: {
+            $0 is NSSlider || $0 is NSSegmentedControl || ($0 as? NSTextField)?.isEditable == true
+          })
         {
           XCTAssertGreaterThanOrEqual(
             title.bounds.width + 1, title.intrinsicContentSize.width,

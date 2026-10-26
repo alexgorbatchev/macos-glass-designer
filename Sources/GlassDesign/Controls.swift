@@ -7,6 +7,25 @@ final class ActionTarget: NSObject {
   @objc func fire(_ sender: NSControl) { handler(sender) }
 }
 
+/// Ends a text field edit when the user presses anywhere outside the field. AppKit leaves the
+/// field editing until Return, so a press elsewhere commits the typed value, except a press on a
+/// slider, which discards it: the slider sets the value instead. The press reaches the window
+/// before the slider starts tracking, which is why this belongs here.
+@MainActor
+final class DesignerWindow: NSWindow {
+  override func sendEvent(_ event: NSEvent) {
+    if event.type == .leftMouseDown, let editor = firstResponder as? NSText,
+      let field = editor.delegate as? NSTextField, let content = contentView,
+      let hit = content.hitTest(
+        content.superview?.convert(event.locationInWindow, from: nil) ?? .zero),
+      !hit.isDescendant(of: field)
+    {
+      if hit is NSSlider { field.abortEditing() } else { makeFirstResponder(nil) }
+    }
+    super.sendEvent(event)
+  }
+}
+
 /// Retains closure targets: AppKit controls reference their targets weakly.
 @MainActor
 final class ActionBindings {

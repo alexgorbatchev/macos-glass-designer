@@ -34,7 +34,7 @@ public final class DesignerController: NSObject, NSWindowDelegate {
   private var shownIssues: String?
 
   public override init() {
-    window = NSWindow(
+    window = DesignerWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1576, height: 830),
       styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false
     )

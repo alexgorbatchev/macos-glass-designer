@@ -14,7 +14,7 @@
 
 1. Start from the Regular, Clear, or Blur preset.
 2. Focus Variants with **⌘L** or Subvariants with **⇧⌘L**. Move with **↑/↓** to apply each selection immediately.
-3. Select an inspector with **⌘1–6** and adjust sliders or enter numeric values. Labels and values share a row, with gray descriptions underneath. The interface uses bundled Maple Mono.
+3. Select an inspector with **⌘1–6** and adjust sliders or enter numeric values. Each value sits at the right end of its label, with a full-width slider and a gray description beneath; click a value to type an exact one. The interface uses bundled Maple Mono.
 4. Drag the glass to move it over any part of the scene. Use **Detach / ⌘D** to move the preview over your desktop. Use **⌘P** for pop and **⌘T** for the second surface.
 5. Click **Copy Swift / ⇧⌘C** and paste into an agent conversation. Use Save to retain an editable recipe.
 
